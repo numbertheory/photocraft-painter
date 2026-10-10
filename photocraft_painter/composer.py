@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import TYPE_CHECKING, Any
 
 from photocraft_painter.fallback_composer import plan_fallback
-from photocraft_painter.strokes import smooth_path
+from photocraft_painter.strokes import smooth_path, stroke_line
 
 if TYPE_CHECKING:
     from photocraft_painter.config import PainterConfig
@@ -284,6 +285,305 @@ def get_detail_guidance(level: int) -> str:
     return f"Level {lvl}/25 (~{target_strokes} brushstrokes) - {desc}"
 
 
+def hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def rgb_to_hex(r: float, g: float, b: float) -> str:
+    return f"#{max(0, min(255, int(round(r)))):02x}{max(0, min(255, int(round(g)))):02x}{max(0, min(255, int(round(b)))):02x}"
+
+
+def adjust_color(hex_col: str | None, factor: float) -> str | None:
+    if not hex_col or not hex_col.startswith("#"):
+        return hex_col
+    try:
+        r, g, b = hex_to_rgb(hex_col)
+        return rgb_to_hex(r * factor, g * factor, b * factor)
+    except Exception:
+        return hex_col
+
+
+def densify_artwork_plan(
+    plan: dict[str, Any], detail_level: int, target_strokes_per_level: int = 10
+) -> dict[str, Any]:
+    """Expand and densify artwork brushstrokes to match the requested detail level (1 to 25).
+
+    If an AI model (Ollama / OpenAI) generates a foundation of ~30-50 master strokes,
+    this engine generates rich multi-pass washes, form cross-hatching, calligraphy accents,
+    and specular highlights, preserving layers so that at detail level 25, ~250 brushstrokes
+    are rendered.
+    """
+    steps = plan.get("steps") or []
+    existing_strokes = [s for s in steps if isinstance(s, dict) and s.get("cmd") == "paint.stroke"]
+    if not existing_strokes:
+        return plan
+
+    detail = max(1, min(detail_level, 25))
+    target = max(len(existing_strokes), int(round(detail * target_strokes_per_level)))
+    needed = target - len(existing_strokes)
+    if needed <= 0:
+        return plan
+
+    washes: list[dict[str, Any]] = []
+    shadings: list[dict[str, Any]] = []
+    contours: list[dict[str, Any]] = []
+    highlights: list[dict[str, Any]] = []
+
+    for s in existing_strokes:
+        p = s.get("params") or {}
+        name = str(p.get("name") or "").lower()
+        size = float(p.get("size") or 10.0)
+        if any(k in name for k in ("highlight", "glint", "sparkle", "white", "rim", "glow")):
+            highlights.append(s)
+        elif any(k in name for k in ("shade", "shadow", "dark", "under", "belly", "depth", "volume")):
+            shadings.append(s)
+        elif size <= 8.0 or any(k in name for k in ("ink", "line", "contour", "sketch", "pencil", "pen")):
+            contours.append(s)
+        else:
+            washes.append(s)
+
+    if not washes:
+        washes = existing_strokes
+    if not shadings:
+        shadings = washes
+    if not contours:
+        contours = existing_strokes
+    if not highlights:
+        highlights = existing_strokes
+
+    q_wash = int(round(needed * 0.40))
+    q_shade = int(round(needed * 0.30))
+    q_contour = int(round(needed * 0.18))
+    q_hi = needed - (q_wash + q_shade + q_contour)
+
+    children_by_parent: dict[int, list[dict[str, Any]]] = {}
+    w_count, sh_count, c_count, h_count = 0, 0, 0, 0
+
+    def add_child(parent_step: dict[str, Any], child_step: dict[str, Any]) -> None:
+        key = id(parent_step)
+        if key not in children_by_parent:
+            children_by_parent[key] = []
+        children_by_parent[key].append(child_step)
+
+    # 1. Color Wash Sweeps
+    for s in washes:
+        if w_count >= q_wash:
+            break
+        p = s.get("params") or {}
+        pts = p.get("points") or []
+        if len(pts) < 2:
+            continue
+        name = str(p.get("name") or "Wash")
+        size = float(p.get("size") or 25.0)
+        col = p.get("color")
+        hardness = float(p.get("hardness") or 0.6)
+        opacity = float(p.get("opacity") or 0.85)
+
+        dx = pts[-1][0] - pts[0][0]
+        dy = pts[-1][1] - pts[0][1]
+        L = max(1.0, math.hypot(dx, dy))
+        nx, ny = -dy / L, dx / L
+
+        passes_for_this = max(1, (q_wash - w_count) // max(1, len(washes)) + 1)
+        for pass_i in range(1, passes_for_this + 1):
+            if w_count >= q_wash:
+                break
+            w_count += 1
+            dist = (pass_i * 0.22) * size * (1 if w_count % 2 == 1 else -1)
+            off_pts = [[round(pt[0] + nx * dist, 1), round(pt[1] + ny * dist, 1)] for pt in pts]
+            add_child(
+                s,
+                {
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"{name} (Wash Sweep {w_count})",
+                        "points": off_pts,
+                        "size": max(8.0, round(size * (0.85 + 0.15 * (w_count % 2)), 1)),
+                        "color": adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06),
+                        "hardness": round(hardness * 0.9, 2),
+                        "opacity": round(max(0.4, opacity * 0.88), 2),
+                    },
+                },
+            )
+
+    # 2. Form Shading & Cross-Hatching
+    for s in shadings:
+        if sh_count >= q_shade:
+            break
+        p = s.get("params") or {}
+        pts = p.get("points") or []
+        if len(pts) < 2:
+            continue
+        name = str(p.get("name") or "Shading")
+        size = float(p.get("size") or 15.0)
+        col = p.get("color")
+
+        dx = pts[-1][0] - pts[0][0]
+        dy = pts[-1][1] - pts[0][1]
+        mid_pt = pts[len(pts) // 2]
+        ang = math.atan2(dy, dx) + math.pi / 4.0
+
+        passes_for_this = max(1, (q_shade - sh_count) // max(1, len(shadings)) + 1)
+        for pass_i in range(1, passes_for_this + 1):
+            if sh_count >= q_shade:
+                break
+            sh_count += 1
+            hlen = max(16.0, size * 1.3)
+            t_offset = (pass_i - 1) * 12.0 * (1 if pass_i % 2 == 1 else -1)
+            cx = mid_pt[0] + (dx / max(1.0, math.hypot(dx, dy))) * t_offset
+            cy = mid_pt[1] + (dy / max(1.0, math.hypot(dx, dy))) * t_offset
+            hx0 = round(cx - math.cos(ang) * hlen * 0.5, 1)
+            hy0 = round(cy - math.sin(ang) * hlen * 0.5, 1)
+            hx1 = round(cx + math.cos(ang) * hlen * 0.5, 1)
+            hy1 = round(cy + math.sin(ang) * hlen * 0.5, 1)
+            add_child(
+                s,
+                {
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"{name} (Hatch Tone {sh_count})",
+                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=8),
+                        "size": max(2.0, min(5.0, round(size * 0.22, 1))),
+                        "color": adjust_color(col, 0.88),
+                        "hardness": 0.85,
+                        "opacity": 0.7,
+                    },
+                },
+            )
+
+    # 3. Ink Contours & Line Art
+    for s in contours:
+        if c_count >= q_contour:
+            break
+        p = s.get("params") or {}
+        pts = p.get("points") or []
+        if len(pts) < 2:
+            continue
+        name = str(p.get("name") or "Ink")
+        size = float(p.get("size") or 4.0)
+        col = p.get("color")
+
+        dx = pts[-1][0] - pts[0][0]
+        dy = pts[-1][1] - pts[0][1]
+        L = max(1.0, math.hypot(dx, dy))
+        nx, ny = -dy / L, dx / L
+
+        passes_for_this = max(1, (q_contour - c_count) // max(1, len(contours)) + 1)
+        for pass_i in range(1, passes_for_this + 1):
+            if c_count >= q_contour:
+                break
+            c_count += 1
+            dist = 1.6 * (1 if c_count % 2 == 1 else -1)
+            off_pts = [[round(pt[0] + nx * dist, 1), round(pt[1] + ny * dist, 1)] for pt in pts]
+            add_child(
+                s,
+                {
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"{name} (Accent Contour {c_count})",
+                        "points": off_pts,
+                        "size": max(1.8, round(size * 0.75, 1)),
+                        "color": col,
+                        "hardness": 0.95,
+                        "opacity": 0.85,
+                    },
+                },
+            )
+
+    # 4. Highlights & Specular Accents
+    for s in highlights:
+        if h_count >= q_hi:
+            break
+        p = s.get("params") or {}
+        pts = p.get("points") or []
+        if len(pts) < 2:
+            continue
+        name = str(p.get("name") or "Highlight")
+        size = float(p.get("size") or 6.0)
+
+        dx = pts[-1][0] - pts[0][0]
+        dy = pts[-1][1] - pts[0][1]
+        mid_pt = pts[len(pts) // 2]
+        ang = math.atan2(dy, dx) + math.pi / 2.0
+
+        passes_for_this = max(1, (q_hi - h_count) // max(1, len(highlights)) + 1)
+        for pass_i in range(1, passes_for_this + 1):
+            if h_count >= q_hi:
+                break
+            h_count += 1
+            glen = max(8.0, size * 0.8)
+            g_off = (pass_i - 1) * 8.0 * (1 if pass_i % 2 == 1 else -1)
+            cx = mid_pt[0] + g_off
+            cy = mid_pt[1] + g_off
+            gx0 = round(cx - math.cos(ang) * glen * 0.5, 1)
+            gy0 = round(cy - math.sin(ang) * glen * 0.5, 1)
+            gx1 = round(cx + math.cos(ang) * glen * 0.5, 1)
+            gy1 = round(cy + math.sin(ang) * glen * 0.5, 1)
+            add_child(
+                s,
+                {
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"{name} (Specular Glint {h_count})",
+                        "points": stroke_line(gx0, gy0, gx1, gy1, steps=6),
+                        "size": max(2.5, round(size * 0.65, 1)),
+                        "color": "#ffffff",
+                        "hardness": 1.0,
+                        "opacity": 0.95,
+                    },
+                },
+            )
+
+    allocated = w_count + sh_count + c_count + h_count
+    fallback_pool = washes + shadings + contours
+    while allocated < needed and fallback_pool:
+        for parent in fallback_pool:
+            if allocated >= needed:
+                break
+            p = parent.get("params") or {}
+            pts = p.get("points") or []
+            if len(pts) < 2:
+                continue
+            allocated += 1
+            name = str(p.get("name") or "Stroke")
+            size = float(p.get("size") or 15.0)
+            col = p.get("color")
+            dx = pts[-1][0] - pts[0][0]
+            dy = pts[-1][1] - pts[0][1]
+            L = max(1.0, math.hypot(dx, dy))
+            nx, ny = -dy / L, dx / L
+            dist = (allocated * 0.18) * size * (1 if allocated % 2 == 1 else -1)
+            off_pts = [[round(pt[0] + nx * dist, 1), round(pt[1] + ny * dist, 1)] for pt in pts]
+            add_child(
+                parent,
+                {
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"{name} (Fine Texture {allocated})",
+                        "points": off_pts,
+                        "size": max(4.0, round(size * 0.7, 1)),
+                        "color": adjust_color(col, 0.96),
+                        "hardness": 0.75,
+                        "opacity": 0.8,
+                    },
+                },
+            )
+
+    final_steps: list[dict[str, Any]] = []
+    for st in steps:
+        final_steps.append(st)
+        key = id(st)
+        if key in children_by_parent:
+            final_steps.extend(children_by_parent[key])
+
+    plan_copy = dict(plan)
+    plan_copy["steps"] = final_steps
+    return plan_copy
+
+
 def compose_with_ollama(
     prompt: str, config: PainterConfig, width: int = 800, height: int = 800
 ) -> dict[str, Any]:
@@ -329,14 +629,18 @@ def compose_with_ollama(
 
     normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
 
-    return {
-        "title": data.get("title") or prompt.title(),
+    base_title = data.get("title") or prompt.title()
+    title = f"{base_title} (Detail {detail}/25)" if f"detail {detail}/25" not in base_title.lower() else base_title
+
+    plan = {
+        "title": title,
         "background": normalize_color(data.get("background")) or "#f8f9fa",
         "width": width,
         "height": height,
         "detail_level": detail,
         "steps": normalized_steps,
     }
+    return densify_artwork_plan(plan, detail_level=detail)
 
 
 def compose_with_openai(
@@ -374,14 +678,18 @@ def compose_with_openai(
     raw_steps = data.get("steps") or []
     normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
 
-    return {
-        "title": data.get("title") or prompt.title(),
+    base_title = data.get("title") or prompt.title()
+    title = f"{base_title} (Detail {detail}/25)" if f"detail {detail}/25" not in base_title.lower() else base_title
+
+    plan = {
+        "title": title,
         "background": normalize_color(data.get("background")) or "#f8f9fa",
         "width": width,
         "height": height,
         "detail_level": detail,
         "steps": normalized_steps,
     }
+    return densify_artwork_plan(plan, detail_level=detail)
 
 
 def plan_artwork(
@@ -411,4 +719,5 @@ def plan_artwork(
     # 3. Built-in procedural fallback
     logger.info("Using built-in procedural composer for '%s' (detail level: %d)", prompt, detail)
     plan = plan_fallback(prompt, width, height, detail_level=detail)
+    plan = densify_artwork_plan(plan, detail_level=detail)
     return plan, f"Built-in Painterly Composer (Detail {detail}/25)"

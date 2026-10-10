@@ -2,6 +2,7 @@
 
 from photocraft_painter.config import PainterConfig
 from photocraft_painter.composer import (
+    densify_artwork_plan,
     extract_json_from_response,
     normalize_color,
     normalize_step,
@@ -183,5 +184,48 @@ def test_plan_fallback_routes_independently():
     plan_coffee = plan_artwork("a cozy cup of coffee", PainterConfig(provider="none"))[0]
     assert "A Cozy Cup Of Coffee" in plan_coffee["title"]
     assert "Rubber Duck" not in plan_coffee["title"]
+
+
+def test_densify_artwork_plan_scales_ai_models():
+    # Simulate a raw foundation plan returned by Ollama with ~48 strokes
+    raw_ollama_plan = {
+        "title": "A Racecar",
+        "steps": (
+            [{"cmd": "layer.new.layer", "params": {"name": "1. Sketch"}}]
+            + [{"cmd": "paint.stroke", "params": {"name": f"Sketch Line {i}", "points": [[100 + i * 5, 100], [200 + i * 5, 200]], "size": 3.0, "color": "#777777"}} for i in range(8)]
+            + [{"cmd": "layer.new.layer", "params": {"name": "2. Body Paint"}}]
+            + [{"cmd": "paint.stroke", "params": {"name": f"Paint Wash {i}", "points": [[120 + i * 10, 300], [400 + i * 10, 300]], "size": 35.0, "color": "#e74c3c"}} for i in range(15)]
+            + [{"cmd": "layer.new.layer", "params": {"name": "3. Shading"}}]
+            + [{"cmd": "paint.stroke", "params": {"name": f"Shading {i}", "points": [[150 + i * 10, 350], [350 + i * 10, 350]], "size": 18.0, "color": "#78281f"}} for i in range(12)]
+            + [{"cmd": "layer.new.layer", "params": {"name": "4. Ink Contours"}}]
+            + [{"cmd": "paint.stroke", "params": {"name": f"Ink Outline {i}", "points": [[100 + i * 10, 320], [300 + i * 10, 320]], "size": 4.0, "color": "#111116"}} for i in range(10)]
+            + [{"cmd": "layer.new.layer", "params": {"name": "5. Highlights"}}]
+            + [{"cmd": "paint.stroke", "params": {"name": f"Highlight {i}", "points": [[200 + i * 20, 280], [250 + i * 20, 280]], "size": 5.0, "color": "#ffffff"}} for i in range(3)]
+        ),
+    }
+
+    def count_strokes(p: dict) -> int:
+        return sum(1 for s in p["steps"] if s["cmd"] == "paint.stroke")
+
+    assert count_strokes(raw_ollama_plan) == 48
+
+    # Detail 5: should preserve or meet ~50 strokes
+    plan_d5 = densify_artwork_plan(raw_ollama_plan, detail_level=5)
+    assert count_strokes(plan_d5) == 50
+
+    # Detail 15: scales to 150 strokes
+    plan_d15 = densify_artwork_plan(raw_ollama_plan, detail_level=15)
+    assert count_strokes(plan_d15) == 150
+
+    # Detail 25: scales to ~250 strokes
+    plan_d25 = densify_artwork_plan(raw_ollama_plan, detail_level=25)
+    assert count_strokes(plan_d25) == 250
+
+    # Child strokes must be in valid layers and have non-empty coordinates
+    for st in plan_d25["steps"]:
+        if st["cmd"] == "paint.stroke":
+            assert len(st["params"]["points"]) >= 2
+            assert st["params"]["size"] > 0
+            assert st["params"]["color"].startswith("#")
 
 
