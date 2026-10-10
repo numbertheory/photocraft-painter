@@ -122,38 +122,48 @@ def test_painterly_sunset_plan():
 def test_detail_level_scaling():
     # Rubber duck stroke and step counts scale strictly with detail level
     duck_l1 = plan_painterly_rubber_duck(800, 800, detail_level=1)
-    duck_l2 = plan_painterly_rubber_duck(800, 800, detail_level=2)
-    duck_l3 = plan_painterly_rubber_duck(800, 800, detail_level=3)
-    duck_l4 = plan_painterly_rubber_duck(800, 800, detail_level=4)
     duck_l5 = plan_painterly_rubber_duck(800, 800, detail_level=5)
+    duck_l15 = plan_painterly_rubber_duck(800, 800, detail_level=15)
+    duck_l25 = plan_painterly_rubber_duck(800, 800, detail_level=25)
 
     def stroke_count(plan: dict) -> int:
         return sum(1 for s in plan["steps"] if s["cmd"] == "paint.stroke")
 
     assert duck_l1["detail_level"] == 1
     assert duck_l5["detail_level"] == 5
+    assert duck_l25["detail_level"] == 25
 
     # Total steps and stroke counts must strictly increase as detail level increases
-    assert len(duck_l1["steps"]) < len(duck_l2["steps"]) < len(duck_l3["steps"]) < len(duck_l4["steps"]) < len(duck_l5["steps"])
-    assert stroke_count(duck_l1) < stroke_count(duck_l2) < stroke_count(duck_l3) < stroke_count(duck_l4) < stroke_count(duck_l5)
+    assert len(duck_l1["steps"]) < len(duck_l5["steps"]) < len(duck_l15["steps"]) < len(duck_l25["steps"])
+    assert stroke_count(duck_l1) < stroke_count(duck_l5) < stroke_count(duck_l15) < stroke_count(duck_l25)
 
-    # Sunset lake shimmer ripples scale with detail level
+    # At detail level 5: ~50 brush strokes (~50-60); at detail level 25: ~250 brush strokes (~240-260)
+    assert 45 <= stroke_count(duck_l5) <= 65
+    assert 235 <= stroke_count(duck_l25) <= 265
+
+    # Sunset lake shimmer ripples and strokes scale with detail level up to 25
     sunset_l1 = plan_painterly_sunset(800, 800, detail_level=1)
     sunset_l5 = plan_painterly_sunset(800, 800, detail_level=5)
-    assert stroke_count(sunset_l1) < stroke_count(sunset_l5)
+    sunset_l25 = plan_painterly_sunset(800, 800, detail_level=25)
+    assert stroke_count(sunset_l1) < stroke_count(sunset_l5) < stroke_count(sunset_l25)
+    assert 45 <= stroke_count(sunset_l5) <= 65
+    assert 235 <= stroke_count(sunset_l25) <= 265
 
 
 def test_plan_artwork_detail_forwarding():
     # When using built-in procedural composer via plan_artwork
     cfg_low = PainterConfig(provider="none", detail_level=1)
-    cfg_high = PainterConfig(provider="none", detail_level=5)
+    cfg_mid = PainterConfig(provider="none", detail_level=5)
+    cfg_high = PainterConfig(provider="none", detail_level=25)
 
     plan_low, src_low = plan_artwork("rubber duck", cfg_low)
+    plan_mid, src_mid = plan_artwork("rubber duck", cfg_mid)
     plan_high, src_high = plan_artwork("rubber duck", cfg_high)
 
-    assert "Detail 1/5" in src_low
-    assert "Detail 5/5" in src_high
-    assert len(plan_low["steps"]) < len(plan_high["steps"])
+    assert "Detail 1/25" in src_low
+    assert "Detail 5/25" in src_mid
+    assert "Detail 25/25" in src_high
+    assert len(plan_low["steps"]) < len(plan_mid["steps"]) < len(plan_high["steps"])
 
 
 def test_plan_fallback_routes_independently():

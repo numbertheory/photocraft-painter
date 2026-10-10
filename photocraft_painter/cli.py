@@ -36,7 +36,7 @@ def print_banner(config: PainterConfig) -> None:
         f"[bold cyan]PhotoCraft Painter[/] [dim]v{__version__}[/]\n"
         f"[dim]Bridge Target:[/]  [green]127.0.0.1:{config.control_port}[/]\n"
         f"[dim]AI Composer:[/]    [yellow]{engine_name}[/] [dim]at[/] [cyan]{engine_target}[/]\n"
-        f"[dim]Detail Level:[/]   [bold yellow]{config.detail_level}/5[/] [dim](more brushstrokes across all layers)[/]\n"
+        f"[dim]Detail Level:[/]   [bold yellow]{config.detail_level}/25[/] [dim](~{config.detail_level * 10} brushstrokes across all layers)[/]\n"
         f"[dim]Drawing Speed:[/]  [magenta]{config.step_delay}s per step[/]"
     )
     console.print(Panel(text, title="🎨 PhotoCraft Live MCP Painter", border_style="cyan"))
@@ -94,7 +94,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/detail <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
     )
 
     while True:
@@ -116,15 +116,15 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
             if len(parts) > 1:
                 try:
                     lvl = int(parts[1])
-                    if 1 <= lvl <= 5:
+                    if 1 <= lvl <= 25:
                         config.detail_level = lvl
-                        console.print(f"[bold green]✓[/] Detail level set to {config.detail_level}/5 (scaling brushstrokes across all layers)\n")
+                        console.print(f"[bold green]✓[/] Detail level set to {config.detail_level}/25 (~{config.detail_level * 10} brushstrokes)\n")
                     else:
-                        console.print("[red]Detail level must be between 1 and 5[/]\n")
+                        console.print("[red]Detail level must be between 1 and 25[/]\n")
                 except ValueError:
-                    console.print("[red]Invalid detail level (expected integer 1-5)[/]\n")
+                    console.print("[red]Invalid detail level (expected integer 1-25)[/]\n")
             else:
-                console.print(f"[cyan]Current detail level:[/] {config.detail_level}/5\n")
+                console.print(f"[cyan]Current detail level:[/] {config.detail_level}/25 (~{config.detail_level * 10} brushstrokes)\n")
             continue
 
         if user_input.startswith("/export"):
@@ -151,7 +151,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
             console.print(
                 "[bold cyan]Available Commands:[/]\n"
                 "  <any text>        Compose and draw illustration live in PhotoCraft\n"
-                "  /detail <1-5>     Adjust drawing detail level (more brushstrokes per layer)\n"
+                "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
                 "  /speed <sec>      Set live step delay (e.g. 0.05 for fast, 0.2 for slower)\n"
                 "  /quit             Exit the program\n"
@@ -232,9 +232,10 @@ def main() -> None:
         "--detail",
         "-d",
         type=int,
-        default=3,
-        choices=[1, 2, 3, 4, 5],
-        help="Drawing detail level 1 (minimal) to 5 (ultra brushstrokes across all layers, default: 3)",
+        default=5,
+        choices=range(1, 26),
+        metavar="1-25",
+        help="Drawing detail level 1 (minimal) to 25 (ultra ~250 brushstrokes, default: 5)",
     )
     parser.add_argument("--launch", action="store_true", help="Automatically launch PhotoCraft if not already running")
     parser.add_argument("--provider", type=str, choices=["ollama", "openai"], default="ollama", help="AI provider (default: ollama)")

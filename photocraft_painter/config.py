@@ -37,8 +37,8 @@ class PainterConfig:
     default_width: int = 800
     default_height: int = 800
 
-    # Detail level: 1 (minimal/quick) to 5 (ultra/dense brushstrokes across all layers)
-    detail_level: int = 3
+    # Detail level: 1 (minimal) to 25 (ultra detail with ~250 brushstrokes)
+    detail_level: int = 5
 
     # AI Model Settings - Ollama is the default composer
     provider: str = field(

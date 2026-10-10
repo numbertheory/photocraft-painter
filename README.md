@@ -73,7 +73,7 @@ uv run photocraft-painter "a rubber duck in water"
 
 * **Default Host:** `http://127.0.0.1:11434` (configurable via `OLLAMA_HOST` or `--ollama-host`)
 * **Default Model:** `ornith-1.5:35b` (configurable via `OLLAMA_MODEL` or `--model`)
-* **Context & Token Tuning:** Automatically configured with `num_ctx: 8192` and `num_predict: 4096` to accommodate reasoning/thinking models without truncation.
+* **Context & Token Tuning:** Automatically configured with `num_ctx: 16384` and `num_predict: 6144` to accommodate reasoning/thinking models without truncation.
 
 ### Switching Models
 To use any other model installed in your Ollama:
@@ -95,7 +95,7 @@ uv run photocraft-painter --provider openai --model "gpt-4o-mini" "a neon city"
 | Flag | Description | Default |
 |---|---|---|
 | `prompt` | Direct prompt to draw immediately | *(Opens interactive REPL)* |
-| `--detail`, `-d` | Drawing detail level from `1` (minimal) to `5` (ultra brushstrokes across all layers) | `3` |
+| `--detail`, `-d` | Drawing detail level from `1` (minimal) to `25` (~10 to ~250 brushstrokes) | `5` |
 | `--model` | Model name | `ornith-1.5:35b` |
 | `--ollama-host` | Ollama API endpoint | `http://127.0.0.1:11434` |
 | `--port` | PhotoCraft control server port | `7878` |
@@ -103,20 +103,21 @@ uv run photocraft-painter --provider openai --model "gpt-4o-mini" "a neon city"
 | `--launch` | Automatically launch PhotoCraft desktop if not running | `false` |
 | `--provider` | AI provider (`ollama` or `openai`) | `ollama` |
 
-### Detail Levels (1 to 5)
-Higher detail values scale brushstrokes and visual density across all layers:
-* **Level 1 (Minimal):** Fast, loose gestural sketch, simple color washes (~15 brushstrokes).
-* **Level 2 (Light):** Basic gesture guides, flat color washes, light contours (~25 brushstrokes).
-* **Level 3 (Standard):** Balanced multi-pass sketch, volumetric shading, and crisp ink lines (~45 brushstrokes).
-* **Level 4 (High Detail):** Dense painterly shading, form hatching, multi-pass contours, and specular accents (~70 brushstrokes).
-* **Level 5 (Ultra Detail):** Masterwork richness, textured brushstrokes, deep cross-hatching, nuanced shadows, and glints (~100+ brushstrokes).
+### Detail Levels (1 to 25)
+Detail scales the number and density of brushstrokes across all layers (~10 brushstrokes per detail level):
+* **Level 1 (Minimal):** Loose gestural sketch lines and basic color blocking (~10–20 brushstrokes).
+* **Level 5 (Standard Default):** Layered color washes, form shading, clean ink contours, and highlights (**~50 brushstrokes**).
+* **Level 10 (High Detail):** Richer multi-pass sweeps, cross-hatching, and enhanced textural accents (**~100 brushstrokes**).
+* **Level 15 (Very High Detail):** Dense painterly color washes, extensive directional shading, and secondary details (**~150 brushstrokes**).
+* **Level 20 (Ultra Detail):** Heavy multi-pass strokes, intricate ink work, cross-hatching, and multiple specular accents (**~200 brushstrokes**).
+* **Level 25 (Masterwork Density):** Maximum artist density across all layers, dense cross-hatching, fine line work, and intricate highlights (**~250 brushstrokes**).
 
 ---
 
 ## Interactive REPL Commands
 
-* `<prompt text>`: Generate illustration and draw live on screen.
-* `/detail <1-5>`: Adjust drawing detail level dynamically (e.g. `/detail 5` for ultra brushstrokes).
+* `<prompt text>`: Generate illustration and draw live on screen (each prompt starts a fresh canvas).
+* `/detail <1-25>`: Adjust drawing detail level dynamically (e.g. `/detail 5` for ~50 strokes, `/detail 25` for ~250 strokes).
 * `/export <file.png>`: Export active document as PNG.
 * `/speed <sec>`: Change live animation speed (e.g. `/speed 0.05` for faster drawing).
 * `/help`: Display available commands.

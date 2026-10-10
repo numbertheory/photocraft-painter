@@ -269,13 +269,19 @@ def extract_json_from_response(text: str) -> dict[str, Any]:
     return data
 
 
-DETAIL_GUIDANCE: dict[int, str] = {
-    1: "Level 1 (Minimal): 10 to 14 total steps. Quick gestural sketch lines and basic color blocking, minimal accents.",
-    2: "Level 2 (Light): 15 to 20 total steps. Sketch guides, base color fill, light tonal shading, clean contours.",
-    3: "Level 3 (Standard): 22 to 32 total steps. Multi-pass pencil sketch, layered color wash, volumetric shading, crisp ink outlines, and highlights.",
-    4: "Level 4 (High Detail): 35 to 48 total steps. Dense brushwork, rich textural color wash, extensive directional shading, fine ink contours, and multiple highlights.",
-    5: "Level 5 (Ultra Detail): 50 to 65 total steps. Masterpiece level brushstrokes across all layers. Highly textured painterly strokes, extensive hatching, rich dimensional shading, delicate ink work, and gleaming highlight dabs.",
-}
+def get_detail_guidance(level: int) -> str:
+    """Describe target stroke density and detail for any level 1 to 25."""
+    lvl = max(1, min(level, 25))
+    target_strokes = int(lvl * 10)
+    if lvl <= 3:
+        desc = "Minimal / quick study: simple expressive gesture lines and basic color blocking."
+    elif lvl <= 7:
+        desc = "Standard artist detail: multi-pass sketch, layered washes, form shading, clean contours."
+    elif lvl <= 15:
+        desc = "High detail: dense painterly wash sweeps, directional shading, multi-pass contours, and rich highlights."
+    else:
+        desc = "Ultra detail / masterwork: rich textured brushwork across all layers, dense cross-hatching, fine line work, and intricate highlights."
+    return f"Level {lvl}/25 (~{target_strokes} brushstrokes) - {desc}"
 
 
 def compose_with_ollama(
@@ -286,10 +292,10 @@ def compose_with_ollama(
 
     client = ollama.Client(host=config.ollama_host)
     model = config.ollama_model
-    detail = max(1, min(config.detail_level, 5))
-    detail_info = DETAIL_GUIDANCE.get(detail, DETAIL_GUIDANCE[3])
+    detail = max(1, min(config.detail_level, 25))
+    detail_info = get_detail_guidance(detail)
 
-    logger.info("Querying Ollama at %s with model '%s' (detail %d/5)...", config.ollama_host, model, detail)
+    logger.info("Querying Ollama at %s with model '%s' (detail %d/25)...", config.ollama_host, model, detail)
 
     res = client.chat(
         model=model,
@@ -343,8 +349,8 @@ def compose_with_openai(
         api_key=config.openai_api_key or "sk-dummy",
         base_url=config.openai_base_url,
     )
-    detail = max(1, min(config.detail_level, 5))
-    detail_info = DETAIL_GUIDANCE.get(detail, DETAIL_GUIDANCE[3])
+    detail = max(1, min(config.detail_level, 25))
+    detail_info = get_detail_guidance(detail)
 
     response = client.chat.completions.create(
         model=config.openai_model,
@@ -382,7 +388,7 @@ def plan_artwork(
     prompt: str, config: PainterConfig, width: int = 800, height: int = 800
 ) -> tuple[dict[str, Any], str]:
     """Plan drawing steps for a prompt. Defaults to Ollama, supports OpenAI, and falls back to procedural."""
-    detail = max(1, min(config.detail_level, 5))
+    detail = max(1, min(config.detail_level, 25))
 
     # 1. Try Ollama (Default)
     if config.provider == "ollama" or (not config.openai_api_key and not config.openai_base_url):
@@ -405,4 +411,4 @@ def plan_artwork(
     # 3. Built-in procedural fallback
     logger.info("Using built-in procedural composer for '%s' (detail level: %d)", prompt, detail)
     plan = plan_fallback(prompt, width, height, detail_level=detail)
-    return plan, f"Built-in Painterly Composer (Detail {detail}/5)"
+    return plan, f"Built-in Painterly Composer (Detail {detail}/25)"
