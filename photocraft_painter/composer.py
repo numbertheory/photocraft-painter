@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any
 from photocraft_painter.fallback_composer import (
     format_document_title,
     is_portrait_or_face_prompt,
+    parse_geometric_shape_prompt,
     plan_fallback,
+    plan_painterly_geometric_shape,
     plan_painterly_portrait,
 )
 from photocraft_painter.strokes import (
@@ -21,6 +23,9 @@ from photocraft_painter.strokes import (
     stroke_enclosed_oval,
     stroke_enclosed_rect,
     stroke_line,
+    stroke_polygon,
+    stroke_regular_polygon_vertices,
+    stroke_triangle,
 )
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
@@ -162,6 +167,24 @@ The artwork features a person, portrait, or human face. You MUST obey these dept
    - Do NOT use crude scratches for the face. Allocate dedicated, distinct anatomical strokes for each feature.
 """
 
+GEOMETRIC_PROMPT_INSTRUCTION = """
+*** CRITICAL GEOMETRIC SHAPES & TRIANGLES RULES (STRICTLY NO GUM DROPS) ***:
+The user prompt requests geometric shapes (e.g. triangle, square, polygon, hexagon). You MUST obey these shape rules:
+1. A TRIANGLE IS AN EXACT 3-SIDED POLYGON:
+   - It MUST have 3 sharp corners (vertices) and straight linear edges connecting them!
+   - ABSOLUTELY FORBIDDEN: NEVER round the corners or bow the sides of a triangle! It must NEVER look like a rounded gum drop, bell, oval, or curved blob!
+2. HOW TO DRAW A TRIANGLE WITH `paint.stroke`:
+   - Define 3 sharp vertices [V0, V1, V2] forming straight edges. Example:
+     Apex V0: [400, 150], Bottom-Right V1: [650, 600], Bottom-Left V2: [150, 600].
+   - Close the loop by returning to the start point: [[400, 150], [650, 600], [150, 600], [400, 150]].
+   - Set "size": 4.5-5.5, "hardness": 1.0, and "name": "Triangle Bounding Outline".
+3. CLEAN INTERIOR COLOR FILL WITH `paint.bucket`:
+   - Follow immediately with `paint.bucket` using the centroid point (e.g. x: 400, y: 450) inside the triangle, with "sampleAllLayers": true.
+4. STYLE ADAPTATION (ESPECIALLY SKETCHY & CARTOON):
+   - In "sketchy" style: include straight pencil drafting guide lines extending through each corner (corner overshoots) and directional diagonal facet cross-hatching.
+   - In "cartoon" style: use bold, crisp, solid black ink outlines (size 5-6, hardness 1.0) and clean cel shading.
+"""
+
 
 def normalize_color(c: Any) -> str | None:
     """Normalize a color value into a valid #rrggbb hex string or None."""
@@ -207,9 +230,28 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
                     valid_pts.append([round(px, 1), round(py, 1), round(pr, 2)])
             if len(valid_pts) < 2:
                 valid_pts = [[100.0, 100.0, 0.5], [101.0, 101.0, 0.5]]
-            elif len(valid_pts) <= 6:
-                # Interpolate coarse waypoints into smooth Catmull-Rom spline
-                valid_pts = smooth_path(valid_pts, samples_per_segment=6)
+            elif len(valid_pts) <= 8:
+                # Check if this stroke represents a closed polygon (e.g. triangle with 4 points, quad with 5 points, etc.)
+                # or is marked with geometric / polygon / linear flags or names
+                is_closed = (
+                    len(valid_pts) >= 4
+                    and math.hypot(valid_pts[0][0] - valid_pts[-1][0], valid_pts[0][1] - valid_pts[-1][1]) < 8.0
+                )
+                name_lower = str(raw_params.get("name") or "").lower()
+                is_polygon_flag = (
+                    bool(raw_params.get("polygon"))
+                    or bool(raw_params.get("linear"))
+                    or raw_params.get("shape") in ("polygon", "triangle", "poly", "rect")
+                    or any(k in name_lower for k in ("triangle", "polygon", "poly", "sided", "geometric", "corner", "vertex", "prism", "pyramid", "delta", "rect", "square", "diamond", "hexagon", "pentagon", "octagon"))
+                )
+
+                if (is_closed or is_polygon_flag) and not raw_params.get("smooth"):
+                    # Linearly interpolate polygon edges to preserve straight sides and sharp vertices!
+                    # Strictly avoids Catmull-Rom spline which rounds triangles into gum drops.
+                    valid_pts = stroke_polygon(valid_pts, wobble=0.0, steps_per_side=15, closed=is_closed)
+                else:
+                    # Interpolate coarse waypoints into smooth Catmull-Rom spline
+                    valid_pts = smooth_path(valid_pts, samples_per_segment=6)
             clean_params["points"] = valid_pts
         else:
             clean_params["points"] = [[100.0, 100.0, 0.5], [101.0, 101.0, 0.5]]
@@ -375,6 +417,62 @@ def expand_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 800) 
             },
         }
         return [outline_step, bucket_step]
+
+    if cmd in (
+        "paint.triangle",
+        "triangle",
+        "triangle.fill",
+        "enclosed_triangle",
+        "paint.polygon",
+        "polygon",
+        "polygon.fill",
+        "enclosed_polygon",
+    ):
+        name = str(raw_params.get("name") or ("Triangle" if "tri" in cmd else "Polygon"))
+        stroke_color = normalize_color(raw_params.get("stroke_color") or raw_params.get("stroke") or "#111111") or "#111111"
+        fill_color = normalize_color(raw_params.get("fill_color") or raw_params.get("fill") or raw_params.get("color") or "#ffd700")
+        stroke_size = float(raw_params.get("stroke_size") or raw_params.get("size") or 4.5)
+
+        pts = raw_params.get("points")
+        if isinstance(pts, list) and len(pts) >= 3:
+            vertices = [[float(p[0]), float(p[1])] for p in pts if isinstance(p, (list, tuple)) and len(p) >= 2]
+        else:
+            sides = int(raw_params.get("sides") or (3 if "tri" in cmd else 3))
+            cx = float(raw_params.get("cx") or raw_params.get("x") or canvas_w * 0.5)
+            cy = float(raw_params.get("cy") or raw_params.get("y") or canvas_h * 0.5)
+            radius = float(raw_params.get("radius") or raw_params.get("size") or min(canvas_w, canvas_h) * 0.3)
+            orientation = float(raw_params.get("orientation") or raw_params.get("angle") or 0.0)
+            vertices = stroke_regular_polygon_vertices(cx, cy, radius, sides=sides, orientation_deg=orientation)
+
+        cx = sum(v[0] for v in vertices) / len(vertices)
+        cy = sum(v[1] for v in vertices) / len(vertices)
+
+        outline_pts = stroke_polygon(vertices, wobble=0.0, steps_per_side=20, closed=True)
+        outline_step = {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{name} (Enclosed Outline)",
+                "points": outline_pts,
+                "size": stroke_size,
+                "color": stroke_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        }
+        res = [outline_step]
+        if fill_color:
+            res.append({
+                "cmd": "paint.bucket",
+                "params": {
+                    "name": f"{name} (Paint Bucket Fill)",
+                    "x": int(round(cx)),
+                    "y": int(round(cy)),
+                    "color": fill_color,
+                    "sampleAllLayers": True,
+                },
+            })
+        return res
 
     return [normalize_step(step, canvas_w, canvas_h)]
 
@@ -1044,9 +1142,18 @@ def compose_with_ollama(
     )
 
     is_portrait = is_portrait_or_face_prompt(prompt, images)
+    is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
     if is_portrait or images:
         style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
+    if is_geometric:
+        style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+
+    geom_hint = (
+        "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
+        if is_geometric
+        else ""
+    )
 
     if images:
         user_content = (
@@ -1056,7 +1163,8 @@ def compose_with_ollama(
             f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
             f"Color Mood: {style_preset.color_mood}\n"
             f"Requested Detail: {detail_info}\n"
-            "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
+            f"{geom_hint}"
+            "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths curves or keeps polygons sharp).\n"
             "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
         )
         user_msg: dict[str, Any] = {
@@ -1072,7 +1180,8 @@ def compose_with_ollama(
                 f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
                 f"Color Mood: {style_preset.color_mood}\n"
                 f"Requested Detail: {detail_info}\n"
-                "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
+                f"{geom_hint}"
+                "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths curves or keeps polygons sharp).\n"
                 "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
             ),
         }
@@ -1156,9 +1265,18 @@ def compose_with_openai(
     detail_info = get_detail_guidance(detail)
 
     is_portrait = is_portrait_or_face_prompt(prompt, images)
+    is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
     if is_portrait or images:
         style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
+    if is_geometric:
+        style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+
+    geom_hint = (
+        "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
+        if is_geometric
+        else ""
+    )
 
     if images:
         text_instruction = (
@@ -1168,6 +1286,7 @@ def compose_with_openai(
             f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
             f"Color Mood: {style_preset.color_mood}\n"
             f"Requested Detail: {detail_info}\n"
+            f"{geom_hint}"
             "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
         )
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_instruction}]
@@ -1189,6 +1308,7 @@ def compose_with_openai(
                 f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
                 f"Color Mood: {style_preset.color_mood}\n"
                 f"Requested Detail: {detail_info}\n"
+                f"{geom_hint}"
                 "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
             ),
         }

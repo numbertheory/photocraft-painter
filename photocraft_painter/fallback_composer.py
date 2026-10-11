@@ -16,7 +16,11 @@ from photocraft_painter.strokes import (
     stroke_hatching,
     stroke_line,
     stroke_painterly_fill,
+    stroke_polygon,
+    stroke_regular_polygon_vertices,
     stroke_sketch_oval,
+    stroke_sketchy_polygon_lines,
+    stroke_triangle,
 )
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
@@ -3861,6 +3865,409 @@ def plan_painterly_portrait(
     }
 
 
+def parse_geometric_shape_prompt(prompt: str) -> tuple[bool, int, str, str | None]:
+    """Parse prompt for geometric shapes and return (is_geometric, sides, shape_name, target_color)."""
+    lowered = prompt.lower()
+
+    color_map = {
+        "red": "#e74c3c",
+        "crimson": "#c0392b",
+        "scarlet": "#e74c3c",
+        "blue": "#3498db",
+        "azure": "#2980b9",
+        "navy": "#1b4f72",
+        "green": "#2ecc71",
+        "emerald": "#27ae60",
+        "lime": "#2ecc71",
+        "yellow": "#f1c40f",
+        "gold": "#f39c12",
+        "golden": "#f39c12",
+        "orange": "#e67e22",
+        "amber": "#d35400",
+        "purple": "#9b59b6",
+        "violet": "#8e44ad",
+        "pink": "#ff69b4",
+        "magenta": "#e056fd",
+        "cyan": "#00ffff",
+        "teal": "#1abc9c",
+        "turquoise": "#1abc9c",
+        "black": "#1c2833",
+        "white": "#ffffff",
+        "gray": "#7f8c8d",
+        "grey": "#7f8c8d",
+    }
+    target_color = None
+    for c_name, c_hex in color_map.items():
+        if re.search(rf"\b{c_name}\b", lowered):
+            target_color = c_hex
+            break
+
+    # 1. Triangle / 3-sided polygon
+    if any(k in lowered for k in [
+        "triangle", "triangular", "trigon", "delta",
+        "3 sided", "3-sided", "3sided", "three sided", "three-sided", "3 sides", "three sides",
+    ]):
+        return True, 3, "Triangle", target_color
+
+    # 2. Quadrilateral / Square / 4-sided polygon
+    if any(k in lowered for k in [
+        "square", "rectangle", "rectangular", "quadrilateral", "rhombus", "diamond",
+        "4 sided", "4-sided", "4sided", "four sided", "four-sided", "4 sides", "four sides",
+    ]):
+        return True, 4, "Square", target_color
+
+    # 3. Pentagon / 5-sided polygon
+    if any(k in lowered for k in [
+        "pentagon", "pentagonal",
+        "5 sided", "5-sided", "5sided", "five sided", "five-sided", "5 sides", "five sides",
+    ]):
+        return True, 5, "Pentagon", target_color
+
+    # 4. Hexagon / 6-sided polygon
+    if any(k in lowered for k in [
+        "hexagon", "hexagonal",
+        "6 sided", "6-sided", "6sided", "six sided", "six-sided", "6 sides", "six sides",
+    ]):
+        return True, 6, "Hexagon", target_color
+
+    # 5. Octagon / 8-sided polygon
+    if any(k in lowered for k in [
+        "octagon", "octagonal",
+        "8 sided", "8-sided", "8sided", "eight sided", "eight-sided", "8 sides", "eight sides",
+    ]):
+        return True, 8, "Octagon", target_color
+
+    # 6. General polygon / geometric shape (defaults to 3-sided polygon as user requested)
+    if any(k in lowered for k in ["polygon", "polygons", "polygonal", "geometric shape", "geometric figure"]):
+        return True, 3, "Polygon", target_color
+
+    return False, 0, "", None
+
+
+def plan_painterly_geometric_shape(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
+    sides: int = 3,
+    shape_name: str = "Triangle",
+    target_color: str | None = None,
+) -> dict[str, Any]:
+    """Generate drawing steps recreating an authentic artist rendering a crisp geometric polygon.
+
+    Guarantees that triangles are true 3-sided polygons with straight edges and sharp corners,
+    strictly preventing rounded or bowed 'gum drop' shapes across all styles (especially sketchy & cartoon).
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    sides = max(3, sides)
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    cx = width * 0.5
+    cy = height * 0.52
+    radius = min(width, height) * 0.36
+
+    # Calculate exact polygon vertices
+    vertices = stroke_regular_polygon_vertices(cx, cy, radius, sides=sides, orientation_deg=0.0)
+
+    # Determine harmonious palette
+    if style_preset.id == "sketchy":
+        bg_color = "#fdfefe"
+        ink_color = "#1c2833"
+        fill_color = target_color or "#566573"
+        shade_color = "#2c3e50"
+        guide_color = "#7f8c8d"
+        highlight_color = "#f2f4f4"
+    elif style_preset.id == "cartoon":
+        bg_color = "#ffffff"
+        ink_color = "#000000"
+        fill_color = target_color or "#e74c3c"
+        shade_color = style_preset.adjust_color(fill_color, 0.75) or "#922b21"
+        guide_color = "#aed6f1"
+        highlight_color = "#ffffff"
+    elif style_preset.id == "dreamlike":
+        bg_color = "#100b20"
+        ink_color = "#2e1c4a"
+        fill_color = target_color or "#9b59b6"
+        shade_color = style_preset.adjust_color(fill_color, 0.8) or "#512e5f"
+        guide_color = "#6c3483"
+        highlight_color = "#f9e79f"
+    elif style_preset.id == "abstract":
+        bg_color = "#17202a"
+        ink_color = "#00ffff"
+        fill_color = target_color or "#e67e22"
+        shade_color = style_preset.adjust_color(fill_color, 0.7) or "#1b2631"
+        guide_color = "#34495e"
+        highlight_color = "#ffffff"
+    else:
+        # Realistic / Painterly
+        bg_color = "#161a22"
+        ink_color = "#0e1117"
+        fill_color = target_color or "#c0392b"
+        shade_color = style_preset.adjust_color(fill_color, 0.72) or "#641e16"
+        guide_color = "#4a5568"
+        highlight_color = "#f8f9fa"
+
+    steps: list[dict[str, Any]] = []
+
+    # 1. Background layer
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Background"}})
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": f"Background Wash ({style_preset.name})",
+            "points": stroke_line(0, cy, width, cy, steps=10),
+            "size": float(max(width, height)),
+            "color": bg_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 2. Construction & Drafting layer
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"2. Drafting & Construction ({shape_name})"}})
+
+    if style_preset.id == "sketchy":
+        # Classical architectural/artist drafting guides with corner overshoots
+        overshoot_lines = stroke_sketchy_polygon_lines(vertices, overshoot=s(18.0), wobble=0.3)
+        for idx, line_pts in enumerate(overshoot_lines, start=1):
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Drafting Guide Line {idx}",
+                    "points": line_pts,
+                    "size": 2.2,
+                    "color": guide_color,
+                    "hardness": 0.85,
+                    "opacity": 0.65,
+                },
+            })
+        # Vertical symmetry axis passing through apex
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Drafting: Central Symmetry Axis",
+                "points": stroke_line(cx, vertices[0][1] - s(30), cx, cy + radius + s(25), steps=20, wobble=0.2),
+                "size": 1.8,
+                "color": "#95a5a6",
+                "hardness": 0.8,
+                "opacity": 0.5,
+            },
+        })
+    elif style_preset.id == "cartoon":
+        # Clean gesture guide polygon with sharp vertices
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Gesture: Guide {shape_name}",
+                "points": stroke_polygon(vertices, wobble=0.0, steps_per_side=15, closed=True),
+                "size": 2.5,
+                "color": guide_color,
+                "hardness": 0.95,
+                "opacity": 0.6,
+                "polygon": True,
+            },
+        })
+    else:
+        # Subtle structural framing lines
+        for i in range(len(vertices)):
+            p1 = vertices[i]
+            p2 = vertices[(i + 1) % len(vertices)]
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Structure: Edge Guide {i + 1}",
+                    "points": stroke_line(p1[0], p1[1], p2[0], p2[1], steps=15, wobble=style_preset.wobble * 0.3),
+                    "size": 2.4,
+                    "color": guide_color,
+                    "hardness": 0.8,
+                    "opacity": 0.55,
+                },
+            })
+
+    # 3. Base Color Flats & Watertight Boundary
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"3. Base Color & Fill ({shape_name})"}})
+
+    # CRITICAL: Straight linear polygon outline (zero Catmull-Rom curvature!)
+    polygon_outline = stroke_polygon(vertices, wobble=0.0 if style_preset.id == "cartoon" else style_preset.wobble * 0.15, steps_per_side=20, closed=True)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": f"{shape_name} Bounding Outline (Enclosed)",
+            "points": polygon_outline,
+            "size": 4.8,
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+
+    # Flood fill cleanly inside centroid
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": f"{shape_name} Flat Fill",
+            "x": int(round(cx)),
+            "y": int(round(cy)),
+            "color": fill_color,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # 4. Facet Shading & Modeling layer
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"4. Facet Shading & Form ({shape_name})"}})
+
+    if sides == 3:
+        # Midpoint of base edge between vertex 1 and 2
+        base_mid = [(vertices[1][0] + vertices[2][0]) * 0.5, (vertices[1][1] + vertices[2][1]) * 0.5]
+        apex = vertices[0]
+
+        # Facet divider line from apex to base
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Facet: Center Ridge Line",
+                "points": stroke_line(apex[0], apex[1], base_mid[0], base_mid[1], steps=20, wobble=0.0 if style_preset.id == "cartoon" else 0.2),
+                "size": 3.2,
+                "color": ink_color if style_preset.id == "cartoon" else shade_color,
+                "hardness": 0.95,
+                "opacity": 0.85,
+            },
+        })
+
+        if style_preset.id == "cartoon":
+            # Right facet cel shadow band
+            right_facet_verts = [apex, vertices[1], base_mid]
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Cel Shadow Facet Boundary",
+                    "points": stroke_polygon(right_facet_verts, wobble=0.0, steps_per_side=15, closed=True),
+                    "size": 3.0,
+                    "color": shade_color,
+                    "hardness": 1.0,
+                    "polygon": True,
+                },
+            })
+            rcx = (apex[0] + vertices[1][0] + base_mid[0]) / 3.0
+            rcy = (apex[1] + vertices[1][1] + base_mid[1]) / 3.0
+            steps.append({
+                "cmd": "paint.bucket",
+                "params": {
+                    "name": "Cel Shadow Facet Fill",
+                    "x": int(round(rcx)),
+                    "y": int(round(rcy)),
+                    "color": shade_color,
+                    "sampleAllLayers": True,
+                },
+            })
+        elif style_preset.id == "sketchy":
+            # Directional cross-hatching inside the right facet
+            hatch_count = 6 + detail * 2
+            for h_i in range(1, hatch_count + 1):
+                t_h = h_i / (hatch_count + 1)
+                hx0 = apex[0] + (base_mid[0] - apex[0]) * t_h
+                hy0 = apex[1] + (base_mid[1] - apex[1]) * t_h
+                hx1 = apex[0] + (vertices[1][0] - apex[0]) * t_h
+                hy1 = apex[1] + (vertices[1][1] - apex[1]) * t_h
+                steps.append({
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"Facet Cross-Hatch {h_i}",
+                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=10, wobble=0.3),
+                        "size": 2.2,
+                        "color": shade_color,
+                        "hardness": 0.9,
+                        "opacity": 0.75,
+                    },
+                })
+        else:
+            # Volumetric chiaroscuro sweeps along right facet
+            rcx = (apex[0] + vertices[1][0] + base_mid[0]) / 3.0
+            rcy = (apex[1] + vertices[1][1] + base_mid[1]) / 3.0
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Facet Chiaroscuro Wash",
+                    "points": stroke_line(rcx - s(40), rcy, rcx + s(40), rcy, steps=12, wobble=0.4),
+                    "size": s(35.0),
+                    "color": shade_color,
+                    "hardness": 0.65,
+                    "opacity": 0.85,
+                },
+            })
+
+    # 5. Ink Contours & Sharp Edge Definition
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"5. Ink Contours ({shape_name})"}})
+
+    contour_pts = stroke_polygon(vertices, wobble=0.0 if style_preset.id == "cartoon" else style_preset.wobble * 0.1, steps_per_side=22, closed=True)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": f"{shape_name} Master Ink Outline",
+            "points": contour_pts,
+            "size": 5.4 if style_preset.id == "cartoon" else 3.8,
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+
+    # 6. Highlights & Accents
+    if detail >= 2:
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"6. Highlights & Accents ({shape_name})"}})
+
+        apex = vertices[0]
+        p_left = vertices[-1]
+        hi_x0 = apex[0] + (p_left[0] - apex[0]) * 0.08
+        hi_y0 = apex[1] + (p_left[1] - apex[1]) * 0.08
+        hi_x1 = apex[0] + (p_left[0] - apex[0]) * 0.45
+        hi_y1 = apex[1] + (p_left[1] - apex[1]) * 0.45
+
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Specular: Leading Edge Highlight",
+                "points": stroke_line(hi_x0, hi_y0, hi_x1, hi_y1, steps=12, wobble=0.0 if style_preset.id == "cartoon" else 0.2),
+                "size": 3.0,
+                "color": highlight_color,
+                "hardness": 0.95,
+                "opacity": 0.9,
+            },
+        })
+
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Specular: Apex Corner Gleam",
+                "points": [[apex[0], apex[1] + s(2), 1.0], [apex[0], apex[1] + s(3), 1.0]],
+                "size": 5.0,
+                "color": highlight_color,
+                "hardness": 1.0,
+                "opacity": 0.95,
+            },
+        })
+
+    title = format_document_title(f"{shape_name} Study", style=style, detail_level=detail, model=model)
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": bg_color,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+    }
+
+
 def plan_fallback(
     prompt: str,
     width: int = 800,
@@ -3875,6 +4282,20 @@ def plan_fallback(
 
     if is_portrait_or_face_prompt(prompt, images):
         return plan_painterly_portrait(prompt, width, height, detail_level, style=style, model=model)
+
+    is_geom, sides, shape_name, target_color = parse_geometric_shape_prompt(prompt)
+    if is_geom:
+        return plan_painterly_geometric_shape(
+            prompt,
+            width,
+            height,
+            detail_level=detail_level,
+            style=style,
+            model=model,
+            sides=sides,
+            shape_name=shape_name,
+            target_color=target_color,
+        )
 
     if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
         return plan_painterly_pikachu(width, height, detail_level, style=style, model=model)

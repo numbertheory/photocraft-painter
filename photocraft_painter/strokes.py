@@ -371,3 +371,142 @@ def stroke_enclosed_oval(
         pts.append((px, py))
 
     return stroke_enclosed_loop(pts, steps_per_segment=2)
+
+
+def stroke_polygon(
+    vertices: Sequence[Sequence[float]],
+    wobble: float = 0.0,
+    steps_per_side: int = 15,
+    closed: bool = True,
+) -> list[list[float]]:
+    """Generate a crisp, straight-edged geometric polygon stroke with sharp vertices.
+
+    Linearly interpolates between each vertex to guarantee flat, straight edges and sharp corners.
+    Never curves or bows the sides like a Catmull-Rom spline, strictly avoiding 'gum drop' rounding.
+    Watertight overlap is applied at vertices so flood fill (paint.bucket) never leaks.
+    """
+    if len(vertices) < 2:
+        return [[float(v[0]), float(v[1]), 1.0] for v in vertices]
+
+    pts = [[float(v[0]), float(v[1])] for v in vertices]
+    if closed and (len(pts) < 3 or math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) > 0.001):
+        pts.append([pts[0][0], pts[0][1]])
+
+    result: list[list[float]] = []
+    n = len(pts) - 1
+    for seg in range(n):
+        p1 = pts[seg]
+        p2 = pts[seg + 1]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        dist = math.hypot(dx, dy)
+        actual_steps = max(steps_per_side, int(dist / 1.5))
+
+        if dist > 0.001 and wobble > 0.001:
+            nx = -dy / dist
+            ny = dx / dist
+        else:
+            nx, ny = 0.0, 0.0
+
+        for step in range(actual_steps):
+            t = step / actual_steps
+            px = p1[0] + dx * t
+            py = p1[1] + dy * t
+
+            if wobble > 0.001:
+                jitter = random.uniform(-wobble * 0.4, wobble * 0.4)
+                px += nx * jitter
+                py += ny * jitter
+
+            result.append([round(px, 1), round(py, 1), 1.0])
+
+    if closed and len(result) > 4:
+        result.append([round(pts[0][0], 1), round(pts[0][1], 1), 1.0])
+        result.append([result[1][0], result[1][1], 1.0])
+        result.append([result[2][0], result[2][1], 1.0])
+    elif not closed and pts:
+        result.append([round(pts[-1][0], 1), round(pts[-1][1], 1), 1.0])
+
+    return result
+
+
+def stroke_regular_polygon_vertices(
+    cx: float,
+    cy: float,
+    radius: float,
+    sides: int = 3,
+    orientation_deg: float = 0.0,
+) -> list[list[float]]:
+    """Calculate the exact Cartesian vertices of a regular polygon with `sides` (sides >= 3).
+
+    For a triangle (sides=3), first vertex is at the top (apex), followed by bottom-right and bottom-left.
+    """
+    sides = max(3, int(sides))
+    rad_offset = math.radians(orientation_deg) - math.pi / 2.0
+    angle_step = 2.0 * math.pi / sides
+
+    vertices: list[list[float]] = []
+    for i in range(sides):
+        ang = rad_offset + i * angle_step
+        vx = cx + radius * math.cos(ang)
+        vy = cy + radius * math.sin(ang)
+        vertices.append([round(vx, 1), round(vy, 1)])
+    return vertices
+
+
+def stroke_triangle(
+    cx: float,
+    cy: float,
+    radius: float,
+    orientation_deg: float = 0.0,
+    wobble: float = 0.0,
+    steps_per_side: int = 20,
+) -> list[list[float]]:
+    """Generate a watertight 3-sided triangle polygon with straight sides and sharp vertices."""
+    verts = stroke_regular_polygon_vertices(cx, cy, radius, sides=3, orientation_deg=orientation_deg)
+    return stroke_polygon(verts, wobble=wobble, steps_per_side=steps_per_side, closed=True)
+
+
+def stroke_sketchy_polygon_lines(
+    vertices: Sequence[Sequence[float]],
+    overshoot: float = 14.0,
+    wobble: float = 0.35,
+) -> list[list[list[float]]]:
+    """Generate authentic drafting pencil strokes for a polygon with visible corner extensions.
+
+    Real artists and architectural draftsmen sketch triangles and geometric shapes with straight lines
+    that overshoot the vertices slightly, giving an unmistakable classical sketched look.
+    """
+    pts = [[float(v[0]), float(v[1])] for v in vertices]
+    if len(pts) < 3:
+        return []
+
+    strokes: list[list[list[float]]] = []
+    n = len(pts)
+    for i in range(n):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % n]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        dist = math.hypot(dx, dy)
+        if dist < 1.0:
+            continue
+
+        ux = dx / dist
+        uy = dy / dist
+
+        # Line 1: Main edge with overshoot past both corners
+        sx = p1[0] - ux * overshoot
+        sy = p1[1] - uy * overshoot
+        ex = p2[0] + ux * overshoot
+        ey = p2[1] + uy * overshoot
+        strokes.append(stroke_line(sx, sy, ex, ey, steps=25, wobble=wobble))
+
+        # Line 2: Subtle secondary drafting search line
+        sx2 = p1[0] - ux * (overshoot * 0.5) + random.uniform(-1.0, 1.0)
+        sy2 = p1[1] - uy * (overshoot * 0.5) + random.uniform(-1.0, 1.0)
+        ex2 = p2[0] + ux * (overshoot * 0.7) + random.uniform(-1.0, 1.0)
+        ey2 = p2[1] + uy * (overshoot * 0.7) + random.uniform(-1.0, 1.0)
+        strokes.append(stroke_line(sx2, sy2, ex2, ey2, steps=20, wobble=wobble * 1.2))
+
+    return strokes

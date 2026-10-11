@@ -23,8 +23,10 @@ from photocraft_painter.composer import (
 from photocraft_painter.fallback_composer import (
     format_document_title,
     is_portrait_or_face_prompt,
+    parse_geometric_shape_prompt,
     plan_dynamic_artwork,
     plan_fallback,
+    plan_painterly_geometric_shape,
     plan_painterly_pikachu,
     plan_painterly_portrait,
     plan_painterly_racecar,
@@ -39,7 +41,11 @@ from photocraft_painter.strokes import (
     stroke_enclosed_rect,
     stroke_line,
     stroke_painterly_fill,
+    stroke_polygon,
+    stroke_regular_polygon_vertices,
     stroke_sketch_oval,
+    stroke_sketchy_polygon_lines,
+    stroke_triangle,
 )
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
@@ -961,4 +967,159 @@ async def test_execute_live_drawing_sanitizes_title(monkeypatch):
     assert "[Painterly]" in captured_name
     base_name = captured_name.split("[")[0].strip()
     assert len(base_name) <= 25
+
+
+def test_stroke_polygon_is_linear_and_sharp():
+    # 3-sided triangle with vertices: (400, 100), (600, 600), (200, 600)
+    verts = [[400.0, 100.0], [600.0, 600.0], [200.0, 600.0]]
+    pts = stroke_polygon(verts, wobble=0.0, steps_per_side=15, closed=True)
+
+    assert len(pts) >= 45
+    # Bottom edge: between (600, 600) and (200, 600), every point must have y == 600.0 (no sagging/gum drop curve!)
+    idx_v1 = next(i for i, p in enumerate(pts) if p[0] == 600.0 and p[1] == 600.0)
+    idx_v2 = next(i for i, p in enumerate(pts) if p[0] == 200.0 and p[1] == 600.0)
+    bottom_pts = pts[idx_v1:idx_v2 + 1]
+    assert len(bottom_pts) >= 15
+    for bp in bottom_pts:
+        assert bp[1] == 600.0
+
+    # Apex vertex at (400, 100) is reached exactly
+    apex_pts = [p for p in pts if p[0] == 400.0 and p[1] == 100.0]
+    assert len(apex_pts) >= 1
+
+    # End overlaps start point for watertight fill
+    assert pts[0][:2] == [400.0, 100.0]
+    assert pts[-1][:2] == pts[2][:2] or pts[-1][:2] == pts[0][:2]
+
+
+def test_normalize_step_preserves_sharp_polygon_no_gum_drops():
+    # A coarse triangle passed with points
+    triangle_step = {
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Triangle Outline",
+            "points": [[400.0, 100.0], [600.0, 600.0], [200.0, 600.0], [400.0, 100.0]],
+            "size": 5.0,
+            "color": "#111111",
+        },
+    }
+    normalized = normalize_step(triangle_step)
+    assert normalized["cmd"] == "paint.stroke"
+    norm_pts = normalized["params"]["points"]
+    assert len(norm_pts) > 10
+
+    # Bottom edge must remain flat (y == 600.0), NOT bowed or curved into a gum drop
+    idx_v1 = next(i for i, p in enumerate(norm_pts) if p[0] == 600.0 and p[1] == 600.0)
+    idx_v2 = next(i for i, p in enumerate(norm_pts) if p[0] == 200.0 and p[1] == 600.0)
+    bottom_pts = norm_pts[idx_v1:idx_v2 + 1]
+    assert len(bottom_pts) >= 15
+    for p in bottom_pts:
+        assert p[1] == 600.0
+
+
+def test_expand_step_geometric_triangle():
+    # Expand composite paint.triangle command
+    tri_step = {
+        "cmd": "paint.triangle",
+        "params": {
+            "name": "Emerald Triangle",
+            "fill": "#2ecc71",
+            "stroke": "#111111",
+            "cx": 400,
+            "cy": 400,
+            "radius": 180,
+        },
+    }
+    expanded = expand_step(tri_step)
+    assert len(expanded) == 2
+
+    # Step 1: paint.stroke with enclosed outline
+    stroke_step = expanded[0]
+    assert stroke_step["cmd"] == "paint.stroke"
+    assert "Enclosed Outline" in stroke_step["params"]["name"]
+    assert stroke_step["params"]["polygon"] is True
+    assert len(stroke_step["params"]["points"]) >= 40
+
+    # Step 2: paint.bucket at centroid
+    bucket_step = expanded[1]
+    assert bucket_step["cmd"] == "paint.bucket"
+    assert bucket_step["params"]["color"] == "#2ecc71"
+    assert bucket_step["params"]["x"] == 400
+    assert bucket_step["params"]["y"] == 400
+    assert bucket_step["params"]["sampleAllLayers"] is True
+
+
+def test_parse_geometric_shape_prompt():
+    assert parse_geometric_shape_prompt("make a triangle") == (True, 3, "Triangle", None)
+    assert parse_geometric_shape_prompt("draw a 3 sided polygon") == (True, 3, "Triangle", None)
+    assert parse_geometric_shape_prompt("a green triangle in sketchy style") == (True, 3, "Triangle", "#2ecc71")
+    assert parse_geometric_shape_prompt("a red 3-sided polygon") == (True, 3, "Triangle", "#e74c3c")
+    assert parse_geometric_shape_prompt("a golden square") == (True, 4, "Square", "#f39c12")
+    assert parse_geometric_shape_prompt("blue hexagon") == (True, 6, "Hexagon", "#3498db")
+    assert parse_geometric_shape_prompt("draw a polygon") == (True, 3, "Polygon", None)
+    assert parse_geometric_shape_prompt("mountain sunset")[0] is False
+
+
+def test_plan_fallback_routes_triangles_all_styles():
+    # 1. Sketchy style
+    sketchy_plan = plan_fallback("make a triangle", style="sketchy")
+    assert "Triangle" in sketchy_plan["title"]
+    assert "[Sketchy]" in sketchy_plan["title"]
+    assert sketchy_plan["background"] == "#fdfefe"
+    # Must have drafting guide lines with corner overshoots
+    has_drafting_lines = any(
+        "Drafting Guide Line" in s.get("params", {}).get("name", "")
+        for s in sketchy_plan["steps"]
+    )
+    assert has_drafting_lines
+    # Must have facet cross-hatching
+    has_hatching = any(
+        "Facet Cross-Hatch" in s.get("params", {}).get("name", "")
+        for s in sketchy_plan["steps"]
+    )
+    assert has_hatching
+    # Must have paint bucket fill
+    has_fill = any(s["cmd"] == "paint.bucket" for s in sketchy_plan["steps"])
+    assert has_fill
+
+    # 2. Cartoon style
+    cartoon_plan = plan_fallback("draw a red triangle", style="cartoon")
+    assert "Triangle" in cartoon_plan["title"]
+    assert "[Cartoon]" in cartoon_plan["title"]
+    # Black ink contour outline with hardness 1.0
+    ink_steps = [
+        s for s in cartoon_plan["steps"]
+        if "Master Ink Outline" in s.get("params", {}).get("name", "")
+    ]
+    assert len(ink_steps) == 1
+    assert ink_steps[0]["params"]["color"] == "#000000"
+    assert ink_steps[0]["params"]["hardness"] == 1.0
+    # Must contain red fill (#e74c3c)
+    red_fills = [
+        s for s in cartoon_plan["steps"]
+        if s["cmd"] == "paint.bucket" and s.get("params", {}).get("color") == "#e74c3c"
+    ]
+    assert len(red_fills) >= 1
+    # Cel shadow facet
+    has_cel_shadow = any(
+        "Cel Shadow" in s.get("params", {}).get("name", "")
+        for s in cartoon_plan["steps"]
+    )
+    assert has_cel_shadow
+
+    # 3. Realistic style
+    realistic_plan = plan_fallback("a green triangle", style="realistic")
+    assert "Triangle" in realistic_plan["title"]
+    assert "[Realistic]" in realistic_plan["title"]
+    has_green = any(
+        s.get("params", {}).get("color") == "#2ecc71"
+        for s in realistic_plan["steps"]
+    )
+    assert has_green
+
+    # 4. 3-sided polygon routing
+    poly_plan = plan_fallback("draw a 3-sided polygon", style="abstract")
+    assert "Triangle" in poly_plan["title"] or "Polygon" in poly_plan["title"]
+    assert "[Abstract]" in poly_plan["title"]
+
 
