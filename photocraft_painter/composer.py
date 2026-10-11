@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from photocraft_painter.fallback_composer import (
+    format_document_title,
     is_portrait_or_face_prompt,
     plan_fallback,
     plan_painterly_portrait,
@@ -1113,7 +1114,7 @@ def compose_with_ollama(
             normalized_steps.extend(expand_step(st, width, height))
 
     base_title = data.get("title") or prompt.title()
-    title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=model)
 
     bg_fallback = (
         "#fdfefe" if style_preset.id == "sketchy" else
@@ -1129,6 +1130,7 @@ def compose_with_ollama(
         "height": height,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": normalized_steps,
     }
     return densify_artwork_plan(plan, detail_level=detail, style=config.style)
@@ -1210,7 +1212,7 @@ def compose_with_openai(
             normalized_steps.extend(expand_step(st, width, height))
 
     base_title = data.get("title") or prompt.title()
-    title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=config.openai_model)
 
     bg_fallback = (
         "#fdfefe" if style_preset.id == "sketchy" else
@@ -1226,6 +1228,7 @@ def compose_with_openai(
         "height": height,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": config.openai_model.strip().replace(":", "-").replace("/", "-"),
         "steps": normalized_steps,
     }
     return densify_artwork_plan(plan, detail_level=detail, style=config.style)
@@ -1280,6 +1283,6 @@ def plan_artwork(
 
     # 4. Built-in procedural fallback
     logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
-    plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images)
+    plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images, model="built-in")
     plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
     return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"

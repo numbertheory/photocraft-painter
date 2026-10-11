@@ -18,11 +18,83 @@ from photocraft_painter.strokes import (
     stroke_painterly_fill,
     stroke_sketch_oval,
 )
-from photocraft_painter.styles import get_style
+from photocraft_painter.styles import STYLE_PRESETS, get_style
+
+
+def format_document_title(
+    base_title: str,
+    style: str | None = None,
+    detail_level: int | None = None,
+    model: str | None = None,
+) -> str:
+    """Format document title for PhotoCraft with no slashes, <=25 char base title, and bracketed metadata.
+
+    Example: "Woman on Staircase [Painterly][Detail 5][kimi-k3-cloud]"
+    """
+    raw = str(base_title or "Artwork")
+
+    # Extract existing bracketed and parenthesized metadata if not explicitly provided
+    extracted_style = None
+    extracted_detail = None
+    extracted_model = None
+
+    for b in re.findall(r"\[(.*?)\]", raw):
+        b_clean = b.strip()
+        m_det = re.match(r"^Detail\s*(\d+)(?:/\d+)?$", b_clean, re.IGNORECASE)
+        if m_det:
+            if extracted_detail is None:
+                extracted_detail = int(m_det.group(1))
+            continue
+        if b_clean.lower() in STYLE_PRESETS or b_clean.title() in [s.name for s in STYLE_PRESETS.values()]:
+            if extracted_style is None:
+                extracted_style = b_clean.lower()
+            continue
+        if extracted_model is None and b_clean:
+            extracted_model = b_clean
+
+    for p in re.findall(r"\((.*?)\)", raw):
+        p_clean = p.strip()
+        m_det = re.match(r"^Detail\s*(\d+)(?:/\d+)?$", p_clean, re.IGNORECASE)
+        if m_det and extracted_detail is None:
+            extracted_detail = int(m_det.group(1))
+
+    # 1. Clean base title: strip existing bracketed tags and parentheses
+    clean = re.sub(r"\[.*?\]", " ", raw)
+    clean = re.sub(r"\(.*?\)", " ", clean)
+    clean = clean.replace("/", " ").replace("\\", " ").replace(":", " ").replace('"', "").replace("'", "")
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    # Truncate to at most 25 characters without trailing punctuation
+    short_title = clean[:25].strip().rstrip(" -_:,.")
+    if not short_title:
+        short_title = "Artwork"
+
+    # 2. Style tag
+    effective_style = style if style is not None else (extracted_style or "realistic")
+    style_preset = get_style(effective_style)
+    style_name = style_preset.name.strip().title().replace("/", "-").replace(":", "-")
+
+    # 3. Detail tag (strictly NO slashes)
+    effective_detail = detail_level if detail_level is not None else (extracted_detail if extracted_detail is not None else 5)
+    detail = max(1, min(int(effective_detail), 25))
+    detail_tag = f"Detail {detail}"
+
+    # 4. Model tag (replace colons and slashes with dashes)
+    effective_model = model if model is not None else (extracted_model or "built-in")
+    clean_model = str(effective_model).strip().replace(":", "-").replace("/", "-").replace("\\", "-")
+    clean_model = clean_model.replace("[", "").replace("]", "").strip(" -_")
+    if not clean_model:
+        clean_model = "built-in"
+
+    return f"{short_title} [{style_name}][{detail_tag}][{clean_model}]"
 
 
 def plan_painterly_rubber_duck(
-    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate drawing steps recreating an artist sketching and painting a rubber duck.
     
@@ -814,18 +886,23 @@ def plan_painterly_rubber_duck(
         bg = "#111822"
 
     return {
-        "title": f"Painterly Rubber Duck [{style_preset.name}] (Detail {detail}/25)",
+        "title": format_document_title("Painterly Rubber Duck", style=style, detail_level=detail, model=model),
         "width": width,
         "height": height,
         "background": bg,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
 
 def plan_painterly_sunset(
-    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate drawing steps recreating an artist painting a mountain sunset.
     
@@ -1100,18 +1177,23 @@ def plan_painterly_sunset(
         bg = "#0f141c"
 
     return {
-        "title": f"Mountain Sunset at Dusk [{style_preset.name}] (Detail {detail}/25)",
+        "title": format_document_title("Mountain Sunset at Dusk", style=style, detail_level=detail, model=model),
         "width": width,
         "height": height,
         "background": bg,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
 
 def plan_painterly_racecar(
-    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate drawing steps recreating an artist sketching and painting an aerodynamic racecar.
     
@@ -1702,18 +1784,23 @@ def plan_painterly_racecar(
         bg = "#161b22"
 
     return {
-        "title": f"Painterly Racecar [{style_preset.name}] (Detail {detail}/25)",
+        "title": format_document_title("Painterly Racecar", style=style, detail_level=detail, model=model),
         "width": width,
         "height": height,
         "background": bg,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
 
 def plan_painterly_pikachu(
-    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate drawing steps recreating an authentic artist illustrating Pikachu.
     
@@ -2359,7 +2446,7 @@ def plan_painterly_pikachu(
             },
         })
 
-    title = f"Painterly Pikachu [{style_preset.name}] (Detail {detail}/25)"
+    title = format_document_title("Painterly Pikachu", style=style, detail_level=detail, model=model)
     return {
         "title": title,
         "background": bg_color,
@@ -2367,12 +2454,18 @@ def plan_painterly_pikachu(
         "height": height,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
 
 def plan_dynamic_artwork(
-    prompt: str, width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate an authentic custom painterly study dynamically themed around any arbitrary prompt.
     
@@ -2811,12 +2904,13 @@ def plan_dynamic_artwork(
         })
 
     return {
-        "title": f"Painterly Study: {prompt.title()} [{style_preset.name}] (Detail {detail}/25)",
+        "title": format_document_title(prompt.title(), style=style, detail_level=detail, model=model),
         "width": width,
         "height": height,
         "background": pal["bg"],
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
@@ -2868,6 +2962,7 @@ def plan_painterly_portrait(
     height: int = 800,
     detail_level: int = 5,
     style: str = "realistic",
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Generate drawing steps recreating an authentic classical portrait (e.g. Botticelli's Venus or Renaissance study).
 
@@ -3746,11 +3841,13 @@ def plan_painterly_portrait(
             })
 
     if is_venus:
-        title = f"The Birth of Venus (Portrait Study) [{style_preset.name}] (Detail {detail}/25)"
+        base_title = "The Birth of Venus"
     elif is_male:
-        title = f"Classical Male Portrait [{style_preset.name}] (Detail {detail}/25)"
+        base_title = "Classical Male Portrait"
     else:
-        title = f"Classical Portrait Study: {prompt.title()} [{style_preset.name}] (Detail {detail}/25)"
+        base_title = f"{prompt.title()} Portrait"
+
+    title = format_document_title(base_title, style=style, detail_level=detail, model=model)
 
     return {
         "title": title,
@@ -3759,6 +3856,7 @@ def plan_painterly_portrait(
         "background": bg_color,
         "detail_level": detail,
         "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
         "steps": steps,
     }
 
@@ -3770,24 +3868,25 @@ def plan_fallback(
     detail_level: int = 5,
     style: str = "realistic",
     images: list[Path] | None = None,
+    model: str = "built-in",
 ) -> dict[str, Any]:
     """Select the best matching painterly plan based on prompt keywords, detail level (1 to 25), and style."""
     lowered = prompt.lower()
 
     if is_portrait_or_face_prompt(prompt, images):
-        return plan_painterly_portrait(prompt, width, height, detail_level, style=style)
+        return plan_painterly_portrait(prompt, width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
-        return plan_painterly_pikachu(width, height, detail_level, style=style)
+        return plan_painterly_pikachu(width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["car", "racecar", "auto", "vehicle", "speed", "formula", "truck"]):
-        return plan_painterly_racecar(width, height, detail_level, style=style)
+        return plan_painterly_racecar(width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["sunset", "mountain", "dusk", "horizon", "lake", "ocean", "landscape"]):
-        return plan_painterly_sunset(width, height, detail_level, style=style)
+        return plan_painterly_sunset(width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["duck", "rubber duck", "bath", "quack"]):
-        return plan_painterly_rubber_duck(width, height, detail_level, style=style)
+        return plan_painterly_rubber_duck(width, height, detail_level, style=style, model=model)
 
     # For any other prompt, create an authentic dynamic composition matching the user's specific prompt
-    return plan_dynamic_artwork(prompt, width, height, detail_level, style=style)
+    return plan_dynamic_artwork(prompt, width, height, detail_level, style=style, model=model)

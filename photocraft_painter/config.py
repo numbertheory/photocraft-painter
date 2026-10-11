@@ -67,6 +67,13 @@ class PainterConfig:
         default_factory=lambda: os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     )
 
+    @property
+    def active_model(self) -> str:
+        """Return the current active model name based on provider."""
+        if self.provider == "openai":
+            return self.openai_model
+        return self.ollama_model
+
     def ensure_token_file(self) -> Path:
         """Ensure a control token file exists; generate one if missing."""
         if self.control_token_file.exists():

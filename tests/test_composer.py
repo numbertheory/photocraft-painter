@@ -21,10 +21,13 @@ from photocraft_painter.composer import (
     validate_image_files,
 )
 from photocraft_painter.fallback_composer import (
+    format_document_title,
     is_portrait_or_face_prompt,
+    plan_dynamic_artwork,
     plan_fallback,
     plan_painterly_pikachu,
     plan_painterly_portrait,
+    plan_painterly_racecar,
     plan_painterly_rubber_duck,
     plan_painterly_sunset,
 )
@@ -830,3 +833,132 @@ def test_sanitize_hair_strokes_against_face():
     sanitized_deviated = sanitize_hair_strokes_against_face([bad_hair_stroke], face_box, allow_face_obstruction=True)
     assert len(sanitized_deviated) == 1
     assert sanitized_deviated[0]["params"]["name"] == "Hair Texture Across Face"
+
+
+def test_format_document_title_user_example():
+    # User's exact requested example
+    result = format_document_title(
+        base_title="Woman on Staircase",
+        style="painterly",
+        detail_level=5,
+        model="kimi-k3-cloud",
+    )
+    assert result == "Woman on Staircase [Painterly][Detail 5][kimi-k3-cloud]"
+    assert "/" not in result
+    assert "\\" not in result
+    assert ":" not in result
+
+
+def test_format_document_title_model_sanitization():
+    # Model names with colons or slashes must use dashes instead
+    res_colon = format_document_title("A Fast Racecar", model="ornith-1.5:35b")
+    assert "[ornith-1.5-35b]" in res_colon
+    assert ":" not in res_colon
+
+    res_slash = format_document_title("Landscape", model="meta-llama/Llama-3.2-Vision:11B")
+    assert "[meta-llama-Llama-3.2-Vision-11B]" in res_slash
+    assert "/" not in res_slash
+    assert ":" not in res_slash
+
+
+def test_format_document_title_strictly_no_slashes_and_length_limit():
+    # Short title must be no more than 25 characters
+    long_prompt = "A Magnificent Oil Painting Of An Astronaut Exploring A Distant Neon Galaxy"
+    result = format_document_title(long_prompt, style="dreamlike", detail_level=25, model="test-model")
+
+    # Extract short title before the first bracket
+    short_title = result.split("[")[0].strip()
+    assert len(short_title) <= 25
+    assert short_title == "A Magnificent Oil Paintin"
+    assert "[Dreamlike]" in result
+    assert "[Detail 25]" in result
+    assert "[test-model]" in result
+    assert "/" not in result
+
+    # Slashes in prompt must be removed/cleaned
+    slash_prompt = "Before/After/Split"
+    slash_res = format_document_title(slash_prompt, detail_level=12)
+    assert "/" not in slash_res
+    assert "[Detail 12]" in slash_res
+
+
+def test_format_document_title_idempotence_and_metadata_preservation():
+    # Re-formatting an already formatted title preserves existing metadata
+    formatted = "Woman on Staircase [Painterly][Detail 5][kimi-k3-cloud]"
+    assert format_document_title(formatted) == formatted
+
+    # Overriding a specific attribute while preserving the rest
+    updated_detail = format_document_title(formatted, detail_level=20)
+    assert updated_detail == "Woman on Staircase [Painterly][Detail 20][kimi-k3-cloud]"
+
+    # Legacy (Detail 5/25) with slash is sanitized to [Detail 5]
+    legacy = "Painterly Rubber Duck [Painterly] (Detail 5/25)"
+    cleaned_legacy = format_document_title(legacy, model="built-in")
+    assert cleaned_legacy == "Painterly Rubber Duck [Painterly][Detail 5][built-in]"
+    assert "/" not in cleaned_legacy
+
+
+def test_procedural_plans_document_titles_have_no_slashes():
+    # All procedural plans must generate titles without slashes, <= 25 char base, and bracketed metadata
+    plans = [
+        plan_painterly_rubber_duck(detail_level=5, style="painterly"),
+        plan_painterly_sunset(detail_level=15, style="dreamlike"),
+        plan_painterly_racecar(detail_level=25, style="realistic"),
+        plan_painterly_pikachu(detail_level=8, style="cartoon"),
+        plan_dynamic_artwork("cyberpunk cityscape in rain", detail_level=10, style="abstract"),
+        plan_painterly_portrait("mona lisa portrait study", detail_level=18, style="painterly"),
+    ]
+
+    for p in plans:
+        title = p["title"]
+        assert "/" not in title, f"Title '{title}' contains illegal slash"
+        assert "\\" not in title
+        assert ":" not in title
+        # Check base title <= 25 chars
+        base_title = title.split("[")[0].strip()
+        assert len(base_title) <= 25, f"Base title '{base_title}' exceeds 25 chars"
+        assert "[" in title and "]" in title
+        assert "[Detail " in title
+
+
+@pytest.mark.anyio
+async def test_execute_live_drawing_sanitizes_title(monkeypatch):
+    from photocraft_painter.artist import execute_live_drawing
+
+    captured_name = None
+
+    class MockClient:
+        async def doc_new(self, width, height, background, name, **kwargs):
+            nonlocal captured_name
+            captured_name = name
+            return {"document_id": "doc_1"}
+
+        async def new_layer(self, name):
+            pass
+
+        async def command_run(self, cmd_id, params=None, wait=True):
+            return {"status": "ok"}
+
+    mock_client = MockClient()
+    plan_with_slashes = {
+        "title": "A Long Elaborate Painting Title Exceeding Twenty Five Characters / Subtitle (Detail 5/25)",
+        "style": "painterly",
+        "detail_level": 5,
+        "model": "ornith-1.5:35b",
+        "width": 800,
+        "height": 800,
+        "steps": [],
+    }
+
+    config = PainterConfig(step_delay=0)
+    await execute_live_drawing(mock_client, plan_with_slashes, config)
+
+    assert captured_name is not None
+    assert "/" not in captured_name
+    assert ":" not in captured_name
+    assert "[Detail 5]" in captured_name
+    assert "[ornith-1.5-35b]" in captured_name
+    assert "[Painterly]" in captured_name
+    base_name = captured_name.split("[")[0].strip()
+    assert len(base_name) <= 25
+

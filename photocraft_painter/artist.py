@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
+from photocraft_painter.fallback_composer import format_document_title
+
 if TYPE_CHECKING:
     from photocraft_painter.config import PainterConfig
     from photocraft_painter.mcp_client import PhotocraftMcpClient
@@ -24,7 +26,12 @@ async def execute_live_drawing(
     width = plan.get("width", config.default_width)
     height = plan.get("height", config.default_height)
     bg = plan.get("background", "white")
-    title = plan.get("title", "Artwork")
+    raw_title = plan.get("title", "Artwork")
+    style = plan.get("style", config.style)
+    detail = plan.get("detail_level", config.detail_level)
+    model = plan.get("model", config.active_model)
+    doc_name = format_document_title(raw_title, style=style, detail_level=detail, model=model)
+    plan["title"] = doc_name
     steps: list[dict[str, Any]] = plan.get("steps", [])
 
     # 1. Create fresh canvas (starts with a raster background layer)
@@ -32,7 +39,7 @@ async def execute_live_drawing(
         width=width,
         height=height,
         background=bg,
-        name=title,
+        name=doc_name,
     )
 
     if config.step_delay > 0:
@@ -77,7 +84,7 @@ async def execute_live_drawing(
             await asyncio.sleep(config.step_delay)
 
     return {
-        "title": title,
+        "title": doc_name,
         "width": width,
         "height": height,
         "steps_drawn": succeeded,
