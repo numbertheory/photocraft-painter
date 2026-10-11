@@ -115,6 +115,23 @@ Instead of messily coloring in subjects with dozens of overlapping horizontal br
 
 ---
 
+## Strict Depth Ordering (Z-Order) & Portrait Fidelity
+
+PhotoCraft Painter enforces strict **Back-to-Front (Z-order) layer depth** to prevent background elements or hair textures from incorrectly overlapping foreground features:
+
+1. **Layer 1: Background & Atmosphere:** Sky, horizon, setting wash drawn first.
+2. **Layer 2: Rear Elements & Back Hair:** Voluminous hair masses and background silhouettes behind the subject.
+3. **Layer 3: Torso, Neck & Shoulders:** Upper body and clothing base filled with `paint.bucket`.
+4. **Layer 4: Head & Face Base (Skin Flat):** Watertight enclosed head outline filled with opaque skin tone, cleanly masking rear hair.
+5. **Layer 5: Facial Features & Anatomy:** High-fidelity almond eyes, eyelids, irises, pupils, specular catchlights, sculpted nose bridge, nostrils, and cupid's bow lips.
+6. **Layer 6: Foreground Framing Hair:** Only delicate tendrils framing the outer silhouette or resting over shoulders. **Horizontal strokes across the eyes, nose, or mouth are strictly forbidden**.
+7. **Layer 7: Specular Highlights & Glints:** White catchlights on pupils, lip gloss, and radiant hair sheen.
+
+### Portrait & Face Optimization
+When faces or human figures are detected in prompts (e.g. *"draw a man or woman"*, *"portrait of a lady"*, *"birth of venus"*, *"bov"*) or in reference image files (`file:/home/jp/Pictures/bov.jpg`), the engine optimizes drawing commands for anatomical accuracy:
+* **Facial Features Protection:** Dedicated eye, eyelid, pupil, nose, and lip contours are never smudged by broad washes or diagonal cross-hatching.
+* **Obstruction Prevention:** Any model-generated hair strokes that attempt to draw across the facial feature area are automatically split into left-side and right-side locks, keeping the face completely legible and pristine (unless explicit prompt deviations like *"hair over face"* or *"veil"* are requested).
+
 ## AI Model Configuration
 
 **Ollama is the default AI composer**, pre-configured for `ornith-1.5:35b`:

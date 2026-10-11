@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import re
 from typing import Any
 
 from photocraft_painter.strokes import (
@@ -2819,15 +2821,961 @@ def plan_dynamic_artwork(
     }
 
 
+def is_portrait_or_face_prompt(prompt: str, images: list[Path] | None = None) -> bool:
+    """Detect whether a prompt or reference image depicts a human face or portrait."""
+    lowered = prompt.lower()
+
+    # Negative override: explicit non-portrait subjects unless portrait words are also present
+    non_portraits = (
+        "car", "racecar", "auto", "vehicle", "duck", "rubber duck",
+        "sunset", "mountain", "landscape", "pikachu", "pokemon", "building", "cityscape"
+    )
+    tokens = set(re.findall(r"\b[a-z0-9_'-]+\b", lowered))
+    portrait_keys = (
+        "woman", "man", "girl", "boy", "person", "lady", "gentleman", "child", "baby",
+        "human", "people", "figure", "portrait", "face", "head", "self-portrait",
+        "bust", "profile", "visage", "goddess", "god", "queen", "king", "prince", "princess",
+        "model", "actress", "actor", "venus", "bov", "botticelli", "mona", "lisa", "monalisa",
+        "eyes", "lips", "smile", "cheeks",
+    )
+
+    if any(k in tokens for k in portrait_keys):
+        return True
+
+    # Multi-word phrases
+    phrases = (
+        "draw a man", "draw a woman", "man or woman", "birth of venus", "mona lisa",
+        "portrait of", "face of", "human figure", "girl with", "woman with", "man with"
+    )
+    if any(ph in lowered for ph in phrases):
+        return True
+
+    if images:
+        for img in images:
+            stem = img.stem.lower()
+            stem_tokens = set(re.findall(r"\b[a-z0-9_'-]+\b", stem.replace("-", " ").replace("_", " ")))
+            if any(k in stem_tokens for k in portrait_keys):
+                return True
+            if "bov" in stem or "venus" in stem or "portrait" in stem or "face" in stem:
+                return True
+
+    return False
+
+
+def plan_painterly_portrait(
+    prompt: str = "portrait",
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+) -> dict[str, Any]:
+    """Generate drawing steps recreating an authentic classical portrait (e.g. Botticelli's Venus or Renaissance study).
+
+    Enforces strict Back-to-Front (Z-order) depth layering:
+    1. Background & Atmosphere: Serene Mediterranean sky/sea wash drawn first.
+    2. Rear Flowing Hair (Backdrop): Large billowing hair masses drawn BEFORE the head and body.
+    3. Shoulders & Torso: Sloping porcelain shoulders and upper chest base with paint.bucket.
+    4. Head & Face Base: Watertight head contour filled with opaque paint.bucket skin tone, cleanly masking rear hair.
+    5. Facial Features: High-fidelity almond eyes, eyelids, irises, pupils, catchlights, sculpted nose, and cupid's bow lips.
+    6. Foreground Framing Hair: Only delicate framing curls and tendrils on outer contours, NEVER obstructing facial features!
+    7. Specular Highlights: Crisp eye catchlights, lip gloss, and lustrous golden hair sheen.
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+
+    lowered = prompt.lower()
+    is_male = any(k in lowered for k in ("man", "male", "gentleman", "boy", "guy", "king", "prince", "father", "son"))
+    is_venus = any(k in lowered for k in ("venus", "bov", "botticelli", "goddess", "aphrodite")) or not is_male
+
+    # Harmonious classical palette
+    sky_wash = "#96b5c6"
+    sky_breeze = "#bad3e0"
+    skin_base = "#faead6"
+    skin_fill = "#fceddb"
+    skin_contour = "#d4ab88"
+    skin_shadow = "#c99b75"
+    cheek_blush = "#f4b49e"
+    lip_rose_upper = "#b85955"
+    lip_rose_lower = "#c96b67"
+    lip_parting = "#6b2d28"
+
+    if is_male:
+        hair_base = "#4a3328"
+        hair_wave = "#5d4233"
+        hair_dark = "#2b1c14"
+        hair_gold = "#8c6751"
+        hair_specular = "#cfb39f"
+        eye_iris = "#5c4033"
+        eyebrow_col = "#332014"
+    else:
+        hair_base = "#d4a34b"
+        hair_wave = "#c68f3a"
+        hair_dark = "#8e5b23"
+        hair_gold = "#fbe29d"
+        hair_specular = "#fffde6"
+        eye_iris = "#6e7a48"  # Botticelli hazel-amber
+        eyebrow_col = "#8a5d2a"
+
+    if style_preset.id == "sketchy":
+        bg_color = "#fdfefe"
+        sky_wash = "#d5dbdb"
+        skin_base = "#f2f4f4"
+        skin_fill = "#f8f9f9"
+        hair_base = "#7f8c8d"
+        hair_wave = "#566573"
+        hair_gold = "#bdc3c7"
+    elif style_preset.id == "dreamlike":
+        bg_color = "#21163e"
+        sky_wash = "#3a256a"
+        skin_fill = "#fff2e6"
+        hair_gold = "#ffeaa7"
+    elif style_preset.id == "cartoon":
+        bg_color = "#ffffff"
+        sky_wash = "#aed6f1"
+    else:
+        bg_color = "#96b5c6"
+
+    # =========================================================================
+    # LAYER 1: PENCIL SKETCH (Loose graphite guide lines)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Pencil Sketch: Portrait Gesture"}})
+
+    # Head gesture oval
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Head Gesture Oval",
+            "points": stroke_sketch_oval(s(445), s(310), s(85), s(115), tilt_deg=-6, passes=1.0 + 0.03 * detail),
+            "size": 3.0,
+            "color": "#7f8c8d",
+            "hardness": 0.8,
+            "opacity": 0.65,
+        },
+    })
+    # Neck & shoulder guide
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Neck Axis",
+            "points": stroke_bezier((s(445), s(420)), (s(450), s(460)), (s(455), s(500)), (s(460), s(540))),
+            "size": 2.5,
+            "color": "#95a5a6",
+            "hardness": 0.75,
+            "opacity": 0.6,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Shoulder Silhouette",
+            "points": stroke_bezier((s(230), s(670)), (s(360), s(570)), (s(450), s(540)), (s(670), s(670))),
+            "size": 3.0,
+            "color": "#95a5a6",
+            "hardness": 0.8,
+            "opacity": 0.6,
+        },
+    })
+    # Eye crosshair axis
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Facial Eye Axis",
+            "points": stroke_line(s(395), s(316), s(505), s(316)),
+            "size": 2.0,
+            "color": "#bdc3c7",
+            "hardness": 0.75,
+            "opacity": 0.5,
+        },
+    })
+
+    if detail >= 3:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Sketch: Flowing Hair Gesture Axis",
+                "points": stroke_bezier((s(510), s(230)), (s(640), s(160)), (s(720), s(180)), (s(760), s(260))),
+                "size": 2.5,
+                "color": "#95a5a6",
+                "hardness": 0.8,
+                "opacity": 0.6,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 2: BACKGROUND & MEDITERRANEAN ATMOSPHERE
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Background & Atmosphere"}})
+
+    # Broad painterly sky/sea sweeps
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Atmosphere: Serene Horizon Wash",
+            "points": stroke_line(s(40), s(160), s(760), s(160), steps=20),
+            "size": max(40.0, s(90.0)),
+            "color": sky_wash,
+            "hardness": 0.35,
+            "opacity": 0.7,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Atmosphere: Lower Maritime Wash",
+            "points": stroke_line(s(40), s(360), s(760), s(360), steps=20),
+            "size": max(40.0, s(90.0)),
+            "color": sky_breeze,
+            "hardness": 0.35,
+            "opacity": 0.6,
+        },
+    })
+
+    if detail >= 5:
+        # Zephyr atmospheric breeze curves blowing from upper left
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Atmosphere: Zephyr Breeze Stream 1",
+                "points": stroke_bezier((s(60), s(120)), (s(220), s(150)), (s(360), s(180)), (s(450), s(210))),
+                "size": 6.0,
+                "color": sky_breeze,
+                "hardness": 0.45,
+                "opacity": 0.5,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Atmosphere: Zephyr Breeze Stream 2",
+                "points": stroke_bezier((s(80), s(220)), (s(240), s(250)), (s(360), s(280)), (s(440), s(300))),
+                "size": 5.0,
+                "color": sky_breeze,
+                "hardness": 0.45,
+                "opacity": 0.45,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 3: REAR FLOWING HAIR (BACKDROP)
+    # Strictly drawn BEFORE head and body so it is completely in the background!
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "3. Rear Flowing Hair (Backdrop)"}})
+
+    # 1. Left Rear Hair Mass: enclosed contour + paint bucket fill
+    left_rear_pts = [
+        [s(380), s(260)],
+        [s(330), s(360)],
+        [s(320), s(480)],
+        [s(360), s(510)],
+        [s(390), s(440)],
+        [s(380), s(260)],
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rear Hair: Left Backdrop Mass (Enclosed)",
+            "points": stroke_enclosed_loop(left_rear_pts),
+            "size": 4.5,
+            "color": hair_dark,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Rear Hair: Left Base Tone Fill",
+            "x": int(s(345)),
+            "y": int(s(420)),
+            "color": hair_base,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # 2. Right Rear Billowing Hair: iconic large billowing locks blowing to the right
+    right_rear_pts = [
+        [s(480), s(210)],
+        [s(580), s(150)],
+        [s(680), s(120)],
+        [s(760), s(160)],
+        [s(770), s(220)],
+        [s(740), s(320)],
+        [s(760), s(440)],
+        [s(710), s(510)],
+        [s(640), s(460)],
+        [s(540), s(440)],
+        [s(500), s(380)],
+        [s(510), s(290)],
+        [s(480), s(210)],
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rear Hair: Right Billowing Mass (Enclosed)",
+            "points": stroke_enclosed_loop(right_rear_pts),
+            "size": 4.5,
+            "color": hair_dark,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Rear Hair: Right Base Tone Fill",
+            "x": int(s(640)),
+            "y": int(s(290)),
+            "color": hair_base,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Layered painterly waves within the billowing rear hair
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rear Hair: Upper Wind Billow Wave",
+            "points": stroke_bezier((s(510), s(220)), (s(620), s(160)), (s(710), s(140)), (s(755), s(180))),
+            "size": max(6.0, s(12.0)),
+            "color": hair_wave,
+            "hardness": 0.8,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rear Hair: Center Flowing Ribbon Wave",
+            "points": stroke_bezier((s(520), s(270)), (s(640), s(240)), (s(720), s(260)), (s(750), s(320))),
+            "size": max(6.0, s(12.0)),
+            "color": hair_dark,
+            "hardness": 0.8,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rear Hair: Lower Billow Swirl",
+            "points": stroke_bezier((s(510), s(340)), (s(610), s(360)), (s(700), s(390)), (s(740), s(460))),
+            "size": max(6.0, s(11.0)),
+            "color": hair_wave,
+            "hardness": 0.8,
+            "opacity": 0.9,
+        },
+    })
+
+    if detail >= 6:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rear Hair: Crest Wave Accent",
+                "points": stroke_bezier((s(590), s(160)), (s(670), s(140)), (s(730), s(160)), (s(760), s(210))),
+                "size": max(4.0, s(7.0)),
+                "color": hair_gold,
+                "hardness": 0.85,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rear Hair: Left Lock Ribbon",
+                "points": stroke_bezier((s(370), s(280)), (s(340), s(370)), (s(330), s(440)), (s(350), s(490))),
+                "size": max(4.0, s(8.0)),
+                "color": hair_wave,
+                "hardness": 0.8,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 4: SHOULDERS, NECK & TORSO
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "4. Shoulders & Torso"}})
+
+    torso_pts = [
+        [s(220), s(680)],
+        [s(340), s(590)],
+        [s(410), s(530)],
+        [s(490), s(540)],
+        [s(580), s(590)],
+        [s(680), s(680)],
+        [s(220), s(680)],
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Torso: Shoulder Contour (Enclosed)",
+            "points": stroke_enclosed_loop(torso_pts),
+            "size": 4.5,
+            "color": skin_contour,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Torso: Alabaster Skin Base Fill",
+            "x": int(s(450)),
+            "y": int(s(620)),
+            "color": skin_base,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Collarbone & neck modeling
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Torso: Left Clavicle Curve",
+            "points": stroke_bezier((s(360), s(575)), (s(390), s(572)), (s(420), s(578)), (s(445), s(582))),
+            "size": 3.0,
+            "color": skin_contour,
+            "hardness": 0.75,
+            "opacity": 0.65,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Torso: Right Clavicle Curve",
+            "points": stroke_bezier((s(460), s(582)), (s(485), s(578)), (s(515), s(572)), (s(545), s(575))),
+            "size": 3.0,
+            "color": skin_contour,
+            "hardness": 0.75,
+            "opacity": 0.65,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Torso: Neck Hollow Shadow",
+            "points": stroke_bezier((s(425), s(450)), (s(450), s(460)), (s(475), s(450)), (s(485), s(440))),
+            "size": 8.0,
+            "color": skin_shadow,
+            "hardness": 0.45,
+            "opacity": 0.5,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 5: HEAD & FACE BASE (SKIN FLAT)
+    # Completely covers any rear hair and sky passing behind the head!
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "5. Head & Face Base (Skin Flat)"}})
+
+    face_contour_pts = [
+        [s(445), s(195)],  # Top center forehead
+        [s(495), s(235)],  # Right temple
+        [s(500), s(325)],  # Right cheek
+        [s(480), s(385)],  # Right jaw
+        [s(445), s(425)],  # Chin tip
+        [s(410), s(385)],  # Left jaw
+        [s(390), s(320)],  # Left cheek
+        [s(400), s(235)],  # Left temple
+        [s(445), s(195)],  # Close back to top
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Face: Head Silhouette Bounding Outline (Enclosed)",
+            "points": stroke_enclosed_loop(face_contour_pts),
+            "size": 4.5,
+            "color": skin_contour,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Face: Luminous Alabaster Skin Flat",
+            "x": int(s(445)),
+            "y": int(s(310)),
+            "color": skin_fill,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 6: FACIAL FEATURES & RENAISSANCE ANATOMY
+    # High fidelity eyes, eyelids, pupils, catchlights, nose bridge, nostrils, and lips
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "6. Facial Features & Modeling"}})
+
+    # --- Eyebrows ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eyebrow Arch",
+            "points": stroke_bezier((s(398), s(298)), (s(418), s(290)), (s(428), s(292)), (s(436), s(295))),
+            "size": 2.6,
+            "color": eyebrow_col,
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eyebrow Arch",
+            "points": stroke_bezier((s(464), s(296)), (s(476), s(292)), (s(496), s(295)), (s(508), s(304))),
+            "size": 2.6,
+            "color": eyebrow_col,
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+
+    # --- Left Eye (Viewer's Left) ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eye Upper Lid Lashline",
+            "points": stroke_bezier((s(404), s(314)), (s(414), s(308)), (s(426), s(310)), (s(434), s(316))),
+            "size": 2.6,
+            "color": "#3e2714",
+            "hardness": 0.95,
+            "opacity": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eye Lower Lid",
+            "points": stroke_bezier((s(406), s(317)), (s(416), s(322)), (s(426), s(321)), (s(432), s(318))),
+            "size": 1.8,
+            "color": "#795548",
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eye Iris",
+            "points": stroke_enclosed_oval(s(419), s(315), s(4.0), s(4.0)),
+            "size": 2.2,
+            "color": eye_iris,
+            "hardness": 0.9,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eye Pupil",
+            "points": [[s(419), s(315)], [s(419.5), s(315.5)]],
+            "size": max(2.5, s(3.5)),
+            "color": "#1a0f08",
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Eye Specular Catchlight",
+            "points": [[s(418), s(314)], [s(418.5), s(314.5)]],
+            "size": max(1.8, s(2.2)),
+            "color": "#ffffff",
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # --- Right Eye (Viewer's Right) ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eye Upper Lid Lashline",
+            "points": stroke_bezier((s(466), s(316)), (s(476), s(311)), (s(488), s(313)), (s(498), s(320))),
+            "size": 2.6,
+            "color": "#3e2714",
+            "hardness": 0.95,
+            "opacity": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eye Lower Lid",
+            "points": stroke_bezier((s(468), s(319)), (s(478), s(325)), (s(488), s(324)), (s(496), s(322))),
+            "size": 1.8,
+            "color": "#795548",
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eye Iris",
+            "points": stroke_enclosed_oval(s(481), s(317), s(4.0), s(4.0)),
+            "size": 2.2,
+            "color": eye_iris,
+            "hardness": 0.9,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eye Pupil",
+            "points": [[s(481), s(317)], [s(481.5), s(317.5)]],
+            "size": max(2.5, s(3.5)),
+            "color": "#1a0f08",
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Eye Specular Catchlight",
+            "points": [[s(480), s(316)], [s(480.5), s(316.5)]],
+            "size": max(1.8, s(2.2)),
+            "color": "#ffffff",
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # --- Sculpted Nose ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Nose Bridge Line",
+            "points": stroke_bezier((s(442), s(305)), (s(444), s(330)), (s(446), s(355)), (s(444), s(372))),
+            "size": 2.2,
+            "color": skin_contour,
+            "hardness": 0.8,
+            "opacity": 0.75,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Nose Tip Bulb",
+            "points": stroke_bezier((s(439), s(372)), (s(444), s(375)), (s(448), s(373)), (s(450), s(371))),
+            "size": 2.0,
+            "color": skin_contour,
+            "hardness": 0.8,
+            "opacity": 0.8,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Left Nostril",
+            "points": stroke_bezier((s(435), s(370)), (s(437), s(373)), (s(439), s(372)), (s(440), s(370))),
+            "size": 1.8,
+            "color": "#8d5b38",
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Right Nostril",
+            "points": stroke_bezier((s(448), s(370)), (s(449), s(373)), (s(452), s(373)), (s(454), s(371))),
+            "size": 1.8,
+            "color": "#8d5b38",
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+
+    # --- Renaissance Rose Lips ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Upper Lip Cupid's Bow",
+            "points": stroke_bezier((s(433), s(396)), (s(440), s(393)), (s(443), s(395)), (s(454), s(398))),
+            "size": 2.5,
+            "color": lip_rose_upper,
+            "hardness": 0.9,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Mouth Parting Line",
+            "points": stroke_bezier((s(433), s(397)), (s(439), s(397)), (s(448), s(397)), (s(454), s(398))),
+            "size": 2.0,
+            "color": lip_parting,
+            "hardness": 0.95,
+            "opacity": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Lower Lip Curve",
+            "points": stroke_bezier((s(435), s(398)), (s(440), s(406)), (s(448), s(405)), (s(452), s(399))),
+            "size": 2.8,
+            "color": lip_rose_lower,
+            "hardness": 0.85,
+            "opacity": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Lower Lip Gloss Highlight",
+            "points": stroke_line(s(442), s(403), s(446), s(403)),
+            "size": 2.0,
+            "color": "#f8d7da",
+            "hardness": 0.7,
+            "opacity": 0.8,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Feature: Chin Groove Shadow",
+            "points": stroke_line(s(439), s(411), s(447), s(411)),
+            "size": 2.5,
+            "color": skin_contour,
+            "hardness": 0.65,
+            "opacity": 0.6,
+        },
+    })
+
+    # --- Cheek Blush Modeling ---
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Modeling: Left Cheek Blush",
+            "points": stroke_bezier((s(395), s(340)), (s(402), s(350)), (s(410), s(355)), (s(415), s(345))),
+            "size": max(12.0, s(22.0)),
+            "color": cheek_blush,
+            "hardness": 0.25,
+            "opacity": 0.35,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Facial Modeling: Right Cheek Blush",
+            "points": stroke_bezier((s(475), s(345)), (s(482), s(355)), (s(490), s(350)), (s(495), s(340))),
+            "size": max(12.0, s(22.0)),
+            "color": cheek_blush,
+            "hardness": 0.25,
+            "opacity": 0.35,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 7: FOREGROUND FRAMING HAIR & TENDRILS
+    # Only delicate framing tendrils on the outer edges, NEVER crossing the face!
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "7. Foreground Framing Hair"}})
+
+    # Forehead hairline framing curls
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Framing Hair: Forehead Left Hairline Curl",
+            "points": stroke_bezier((s(420), s(215)), (s(408), s(228)), (s(402), s(245)), (s(398), s(265))),
+            "size": max(3.5, s(6.0)),
+            "color": hair_wave,
+            "hardness": 0.85,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Framing Hair: Forehead Right Hairline Curl",
+            "points": stroke_bezier((s(465), s(215)), (s(480), s(228)), (s(490), s(245)), (s(496), s(265))),
+            "size": max(3.5, s(6.0)),
+            "color": hair_wave,
+            "hardness": 0.85,
+        },
+    })
+
+    # Cascading tendrils down the left cheek outer edge onto chest
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Framing Hair: Left Outer Cheek Tendril",
+            "points": stroke_bezier((s(392), s(260)), (s(378), s(330)), (s(365), s(420)), (s(380), s(520))),
+            "size": max(4.0, s(7.0)),
+            "color": hair_gold,
+            "hardness": 0.85,
+        },
+    })
+
+    # Cascading tendrils down the right cheek outer edge over shoulder
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Framing Hair: Right Outer Cheek Tendril",
+            "points": stroke_bezier((s(500), s(260)), (s(515), s(340)), (s(530), s(430)), (s(510), s(520))),
+            "size": max(4.0, s(7.0)),
+            "color": hair_gold,
+            "hardness": 0.85,
+        },
+    })
+
+    # Botticelli's iconic spiral lock resting over the neck and chest
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Framing Hair: Botticelli Chest Spiral Lock",
+            "points": stroke_bezier((s(465), s(440)), (s(452), s(475)), (s(472), s(515)), (s(460), s(550))),
+            "size": max(3.5, s(6.0)),
+            "color": hair_gold,
+            "hardness": 0.85,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 8: SPECULAR HIGHLIGHTS & HAIR SHEEN
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "8. Specular Highlights & Glints"}})
+
+    # Nose tip and forehead specular highlights
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Nose Tip Specular Point",
+            "points": [[s(445), s(370)], [s(445.5), s(370.5)]],
+            "size": max(2.5, s(3.5)),
+            "color": "#ffffff",
+            "hardness": 1.0,
+            "opacity": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Forehead Radiance Glow",
+            "points": stroke_line(s(440), s(235), s(450), s(235)),
+            "size": max(5.0, s(9.0)),
+            "color": "#fffef0",
+            "hardness": 0.35,
+            "opacity": 0.65,
+        },
+    })
+    # Golden hair luster threads
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Right Billowing Hair Luster 1",
+            "points": stroke_bezier((s(620), s(155)), (s(680), s(135)), (s(730), s(150)), (s(760), s(190))),
+            "size": max(2.5, s(4.0)),
+            "color": hair_specular,
+            "hardness": 0.9,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Right Billowing Hair Luster 2",
+            "points": stroke_bezier((s(640), s(235)), (s(700), s(245)), (s(740), s(290)), (s(755), s(330))),
+            "size": max(2.5, s(4.0)),
+            "color": hair_specular,
+            "hardness": 0.9,
+            "opacity": 0.9,
+        },
+    })
+
+    # =========================================================================
+    # SCALING DETAIL DENSITY (Detail 1 to 25)
+    # =========================================================================
+    if detail > 5:
+        extra_density = detail - 5
+        # 1. Extra rear hair billow ribbons (in rear hair layer)
+        for i in range(min(extra_density * 2, 20)):
+            hy = s(160 + (i % 6) * 45)
+            hx0 = s(540 + (i % 4) * 25)
+            hx1 = s(730 + (i % 3) * 15)
+            steps.insert(len(steps) - 15, {
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Rear Hair: Wind Wave Detail {i+1}",
+                    "points": stroke_bezier((hx0, hy), (hx0 + s(70), hy - s(20)), (hx1 - s(40), hy + s(10)), (hx1, hy + s(30))),
+                    "size": max(2.5, s(5.0 - (i % 3) * 0.8)),
+                    "color": hair_wave if i % 2 == 0 else hair_dark,
+                    "hardness": 0.8,
+                    "opacity": 0.85,
+                },
+            })
+
+        # 2. Extra foreground framing golden curl tendrils (on sides)
+        for j in range(min(extra_density * 2, 20)):
+            side = 1 if j % 2 == 0 else -1
+            bx = s(505 + (j % 5) * 8) if side == 1 else s(385 - (j % 5) * 8)
+            by = s(280 + j * 12)
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Framing Hair: Fine Golden Strand {j+1}",
+                    "points": stroke_bezier((bx, by), (bx + side * s(15), by + s(40)), (bx + side * s(8), by + s(80)), (bx + side * s(20), by + s(120))),
+                    "size": max(1.8, s(3.2 - (j % 4) * 0.3)),
+                    "color": hair_gold if j % 2 == 0 else hair_specular,
+                    "hardness": 0.9,
+                    "opacity": 0.85,
+                },
+            })
+
+        # 3. Extra specular luster glints
+        for k in range(min(extra_density, 12)):
+            gx = s(600 + (k * 29) % 150)
+            gy = s(140 + (k * 37) % 250)
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Highlight: Hair Specular Glint {k+1}",
+                    "points": stroke_line(gx, gy, gx + s(18), gy + s(6)),
+                    "size": max(1.8, s(3.0)),
+                    "color": hair_specular,
+                    "hardness": 0.95,
+                    "opacity": 0.9,
+                },
+            })
+
+    if is_venus:
+        title = f"The Birth of Venus (Portrait Study) [{style_preset.name}] (Detail {detail}/25)"
+    elif is_male:
+        title = f"Classical Male Portrait [{style_preset.name}] (Detail {detail}/25)"
+    else:
+        title = f"Classical Portrait Study: {prompt.title()} [{style_preset.name}] (Detail {detail}/25)"
+
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": bg_color,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "steps": steps,
+    }
+
+
 def plan_fallback(
     prompt: str,
     width: int = 800,
     height: int = 800,
     detail_level: int = 5,
     style: str = "realistic",
+    images: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Select the best matching painterly plan based on prompt keywords, detail level (1 to 25), and style."""
     lowered = prompt.lower()
+
+    if is_portrait_or_face_prompt(prompt, images):
+        return plan_painterly_portrait(prompt, width, height, detail_level, style=style)
 
     if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
         return plan_painterly_pikachu(width, height, detail_level, style=style)

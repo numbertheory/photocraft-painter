@@ -10,15 +10,21 @@ from photocraft_painter.composer import (
     densify_artwork_plan,
     expand_step,
     extract_json_from_response,
+    get_face_feature_bounds,
+    is_facial_feature_stroke,
+    is_hair_stroke,
     normalize_color,
     normalize_step,
     parse_prompt_and_images,
     plan_artwork,
+    sanitize_hair_strokes_against_face,
     validate_image_files,
 )
 from photocraft_painter.fallback_composer import (
+    is_portrait_or_face_prompt,
     plan_fallback,
     plan_painterly_pikachu,
+    plan_painterly_portrait,
     plan_painterly_rubber_duck,
     plan_painterly_sunset,
 )
@@ -623,7 +629,204 @@ def test_plan_painterly_pikachu():
     assert "Pikachu" in routed_plan["title"]
 
 
+def test_is_portrait_or_face_prompt_keywords():
+    assert is_portrait_or_face_prompt("draw a man or woman") is True
+    assert is_portrait_or_face_prompt("portrait of a warrior") is True
+    assert is_portrait_or_face_prompt("bov") is True
+    assert is_portrait_or_face_prompt("birth of venus") is True
+    assert is_portrait_or_face_prompt("venus") is True
+    assert is_portrait_or_face_prompt("young girl with ribbon") is True
+    assert is_portrait_or_face_prompt("mona lisa study") is True
+    assert is_portrait_or_face_prompt("classical gentleman") is True
+
+    # Non-portraits
+    assert is_portrait_or_face_prompt("a red sports car") is False
+    assert is_portrait_or_face_prompt("rubber duck in bath") is False
+    assert is_portrait_or_face_prompt("sunset over mountains") is False
+    assert is_portrait_or_face_prompt("pikachu") is False
 
 
+def test_is_portrait_or_face_prompt_with_images():
+    assert is_portrait_or_face_prompt("", [Path("/home/jp/Pictures/bov.jpg")]) is True
+    assert is_portrait_or_face_prompt("", [Path("/home/jp/Pictures/venus.png")]) is True
+    assert is_portrait_or_face_prompt("", [Path("/home/jp/Pictures/portrait_study.webp")]) is True
+    assert is_portrait_or_face_prompt("duck", [Path("/home/jp/Pictures/duck.png")]) is False
 
 
+def test_plan_painterly_portrait_strict_z_order_depth():
+    plan = plan_painterly_portrait("birth of venus", detail_level=5)
+    layer_names = [s["params"]["name"] for s in plan["steps"] if s["cmd"] == "layer.new.layer"]
+
+    # Verify key depth layers exist in strict Back-to-Front Z-order
+    assert any("Background" in l or "Atmosphere" in l for l in layer_names)
+    assert any("Rear" in l and "Hair" in l for l in layer_names)
+    assert any("Shoulders" in l or "Torso" in l for l in layer_names)
+    assert any("Head & Face Base" in l for l in layer_names)
+    assert any("Facial Features" in l for l in layer_names)
+    assert any("Foreground Framing Hair" in l for l in layer_names)
+    assert any("Specular Highlights" in l for l in layer_names)
+
+    # Verify index ordering of layers
+    bg_idx = next(i for i, l in enumerate(layer_names) if "Background" in l or "Atmosphere" in l)
+    rear_hair_idx = next(i for i, l in enumerate(layer_names) if "Rear" in l and "Hair" in l)
+    torso_idx = next(i for i, l in enumerate(layer_names) if "Shoulders" in l or "Torso" in l)
+    face_base_idx = next(i for i, l in enumerate(layer_names) if "Head & Face Base" in l)
+    features_idx = next(i for i, l in enumerate(layer_names) if "Facial Features" in l)
+    front_hair_idx = next(i for i, l in enumerate(layer_names) if "Foreground Framing Hair" in l)
+    highlights_idx = next(i for i, l in enumerate(layer_names) if "Specular Highlights" in l)
+
+    # Strict Z-order: Rear Hair must come BEFORE Face Base, and Face Base BEFORE Features
+    assert bg_idx < rear_hair_idx
+    assert rear_hair_idx < torso_idx
+    assert torso_idx < face_base_idx
+    assert face_base_idx < features_idx
+    assert features_idx < front_hair_idx
+    assert front_hair_idx < highlights_idx
+
+
+def test_plan_painterly_portrait_facial_features_fidelity():
+    plan = plan_painterly_portrait("venus", detail_level=5)
+    stroke_names = [s["params"].get("name", "") for s in plan["steps"] if s["cmd"] == "paint.stroke"]
+    bucket_steps = [s for s in plan["steps"] if s["cmd"] == "paint.bucket"]
+
+    # Face base must have paint.bucket in skin tone
+    assert any("Alabaster Skin Flat" in s["params"].get("name", "") for s in bucket_steps)
+
+    # Eyes: Upper lashline, lower lid, iris, pupil, and white specular catchlight
+    assert any("Left Eye Upper Lid" in name for name in stroke_names)
+    assert any("Left Eye Lower Lid" in name for name in stroke_names)
+    assert any("Left Eye Iris" in name for name in stroke_names)
+    assert any("Left Eye Pupil" in name for name in stroke_names)
+    assert any("Left Eye Specular Catchlight" in name for name in stroke_names)
+
+    # Eyebrows
+    assert any("Eyebrow Arch" in name for name in stroke_names)
+
+    # Nose: Bridge, tip bulb, nostrils
+    assert any("Nose Bridge" in name for name in stroke_names)
+    assert any("Nose Tip" in name for name in stroke_names)
+    assert any("Nostril" in name for name in stroke_names)
+
+    # Lips: Cupid's bow, mouth parting line, lower lip, gloss highlight
+    assert any("Cupid's Bow" in name for name in stroke_names)
+    assert any("Mouth Parting Line" in name for name in stroke_names)
+    assert any("Lower Lip Curve" in name for name in stroke_names)
+    assert any("Lower Lip Gloss" in name for name in stroke_names)
+
+
+def test_plan_painterly_portrait_unobstructed_face():
+    plan = plan_painterly_portrait("venus", detail_level=5)
+    steps = plan["steps"]
+
+    # Identify steps in Foreground Framing Hair layer
+    in_framing = False
+    framing_strokes = []
+    for s in steps:
+        if s.get("cmd") == "layer.new.layer":
+            name = s["params"]["name"]
+            if "Foreground Framing Hair" in name:
+                in_framing = True
+            elif in_framing:
+                break
+        elif in_framing and s.get("cmd") == "paint.stroke":
+            framing_strokes.append(s)
+
+    # Facial feature box: x in [400, 495], y in [290, 415]
+    # No framing hair stroke should cross horizontally through the eyes, nose, and mouth
+    for s in framing_strokes:
+        pts = s["params"]["points"]
+        pts_in_face = [
+            pt for pt in pts
+            if 410 <= pt[0] <= 485 and 300 <= pt[1] <= 410
+        ]
+        assert len(pts_in_face) == 0, f"Framing stroke '{s['params']['name']}' crossed into facial feature zone: {pts_in_face}"
+
+
+def test_plan_painterly_portrait_detail_scaling():
+    p1 = plan_painterly_portrait("portrait", detail_level=1)
+    p5 = plan_painterly_portrait("portrait", detail_level=5)
+    p25 = plan_painterly_portrait("portrait", detail_level=25)
+
+    s1 = [s for s in p1["steps"] if s["cmd"] == "paint.stroke"]
+    s5 = [s for s in p5["steps"] if s["cmd"] == "paint.stroke"]
+    s25 = [s for s in p25["steps"] if s["cmd"] == "paint.stroke"]
+
+    assert len(s1) >= 15
+    assert len(s5) >= 30
+    assert len(s25) > len(s5) + 30
+
+
+def test_plan_fallback_routes_portraits():
+    config = PainterConfig(provider="none")
+
+    # Venus / BOV
+    p_bov, _ = plan_artwork("bov", config)
+    assert "Venus" in p_bov["title"] or "Portrait" in p_bov["title"]
+
+    # Man or woman
+    p_mow, _ = plan_artwork("draw a man or woman", config)
+    assert "Portrait" in p_mow["title"]
+
+    # Image reference to bov.jpg
+    p_img, _ = plan_artwork("file:/home/jp/Pictures/bov.jpg", config)
+    assert "Venus" in p_img["title"] or "Portrait" in p_img["title"]
+
+
+def test_densify_artwork_plan_protects_facial_features():
+    plan = {
+        "title": "Portrait Test",
+        "steps": [
+            {
+                "cmd": "paint.stroke",
+                "params": {"name": "Facial Feature: Left Eye Pupil", "points": [[420, 315], [421, 315]], "size": 3.0, "color": "#000000"},
+            },
+            {
+                "cmd": "paint.stroke",
+                "params": {"name": "Facial Feature: Upper Lip Cupid's Bow", "points": [[433, 396], [454, 398]], "size": 2.5, "color": "#b85955"},
+            },
+            {
+                "cmd": "paint.stroke",
+                "params": {"name": "Background Atmosphere Wash", "points": [[100, 100], [700, 100]], "size": 40.0, "color": "#96b5c6"},
+            },
+        ],
+    }
+    densified = densify_artwork_plan(plan, detail_level=10)
+    for s in densified["steps"]:
+        if s.get("cmd") == "paint.stroke":
+            name = s["params"].get("name", "")
+            # Broad washes should never be generated for pupil or cupid's bow
+            if "Wash" in name:
+                assert "Pupil" not in name
+                assert "Cupid's Bow" not in name
+
+
+def test_sanitize_hair_strokes_against_face():
+    # Face feature box centered around (450, 350)
+    face_box = (400.0, 300.0, 500.0, 400.0)
+
+    # A bad stroke that crosses horizontally straight through the face: x=300 to x=600 at y=350
+    bad_hair_stroke = {
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Hair Texture Across Face",
+            "points": [[320, 350], [360, 350], [420, 350], [480, 350], [540, 350], [580, 350]],
+            "size": 8.0,
+            "color": "#d4a34b",
+        },
+    }
+
+    sanitized = sanitize_hair_strokes_against_face([bad_hair_stroke], face_box, allow_face_obstruction=False)
+    # The bad stroke must be split into Left Lock and Right Lock, leaving the center clear
+    assert len(sanitized) == 2
+    assert "Left Lock" in sanitized[0]["params"]["name"]
+    assert "Right Lock" in sanitized[1]["params"]["name"]
+
+    for pt in sanitized[0]["params"]["points"]:
+        assert pt[0] < face_box[0]
+    for pt in sanitized[1]["params"]["points"]:
+        assert pt[0] > face_box[2]
+
+    # If explicit deviation is allowed (e.g. hair over face), it is preserved intact
+    sanitized_deviated = sanitize_hair_strokes_against_face([bad_hair_stroke], face_box, allow_face_obstruction=True)
+    assert len(sanitized_deviated) == 1
+    assert sanitized_deviated[0]["params"]["name"] == "Hair Texture Across Face"

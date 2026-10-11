@@ -9,7 +9,11 @@ from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
-from photocraft_painter.fallback_composer import plan_fallback
+from photocraft_painter.fallback_composer import (
+    is_portrait_or_face_prompt,
+    plan_fallback,
+    plan_painterly_portrait,
+)
 from photocraft_painter.strokes import (
     smooth_path,
     stroke_enclosed_loop,
@@ -28,12 +32,28 @@ SYSTEM_PROMPT = """You are a master artist, painter, and illustrator for PhotoCr
 Your goal is to plan and generate drawing commands that recreate an authentic human artist drawing the user's prompt on a digital canvas.
 Keep your internal reasoning very short and concise (under 150 words). Immediately output the JSON illustration plan.
 
-An artist typically works in layers:
-1. "Pencil Sketch": loose, expressive sketch lines outlining the subject's anatomy and gestures.
-2. "Base Fills & Flats": clean solid color blocking using completely enclosed bounding outlines and the Paint Bucket tool.
-3. "Shading & Form": deeper tonal brush strokes modeling 3D volume and shadows.
-4. "Ink Contours": crisp, confident pen/brush contour lines defining edges and fine details.
-5. "Highlights": sparkling accents, glints, and white dabs.
+CRITICAL DEPTH & LAYER ORDERING (STRICT BACK-TO-FRONT / Z-ORDER):
+Digital drawing renders strokes in sequential order. Elements behind must ALWAYS be drawn BEFORE elements in front!
+An artist works in strict depth layers:
+1. "1. Background & Atmosphere": Sky, environment, room, setting wash drawn FIRST.
+2. "2. Rear Elements & Back Hair": Anything physically BEHIND the subject.
+   - For portraits/figures: draw the rear hair volume, back flowing tresses, and backdrop silhouettes.
+3. "3. Body, Torso & Clothes": Shoulders, neck, collar, clothing, drapery.
+4. "4. Head & Face Base (Skin Flat)":
+   - Head oval and jawline drawn as a completely enclosed contour, then IMMEDIATELY filled with `paint.bucket` in the skin tone ("sampleAllLayers": true).
+   - CRITICAL: This opaque skin base cleanly covers any background lines and rear hair passing behind the head!
+5. "5. Facial Features & Anatomical Modeling":
+   - Drawn ON TOP of the clean face skin flat.
+   - Eyes: upper & lower eyelid contours, colored iris, dark pupil, white catchlight dot.
+   - Eyebrows: arched hair strokes matching the gaze and expression.
+   - Nose: subtle shaded nose bridge line and small nostril curves.
+   - Mouth: upper lip with cupid's bow, lower lip curve, center mouth parting line, natural rosy tone.
+   - Soft cheek blush, jawline shading, and facial depth modeling.
+6. "6. Foreground Framing Hair & Accents":
+   - ONLY draw hair locks or elements that sit physically IN FRONT of the shoulders or gently frame the outer cheeks.
+   - STRICT FORBIDDEN RULE: NEVER draw horizontal hair strokes, texture sweeps, or hatching across the eyes, nose, or mouth! The face must remain clean, legible, and completely unobstructed!
+7. "7. Specular Highlights & Glints":
+   - White eye pupil catchlights, lip gloss gleams, nose tip glint, and lustrous hair sheen accents.
 
 Output strictly valid JSON matching this schema:
 {
@@ -116,6 +136,29 @@ Instead:
 
 Canvas size is 800x800 pixels. Generate expressive steps according to the requested detail level.
 Output ONLY the JSON object.
+"""
+
+PORTRAIT_PROMPT_INSTRUCTION = """
+*** CRITICAL PORTRAIT & FACE DEPTH RULES (STRICT Z-ORDER) ***:
+The artwork features a person, portrait, or human face. You MUST obey these depth and anatomical rules:
+1. STRICT Z-ORDER (BACK-TO-FRONT):
+   - Layer 1: Background & Atmosphere (sky, setting, canvas wash) MUST be drawn first.
+   - Layer 2: Rear Hair & Backdrop Elements (hair volume and flowing tresses behind the head/shoulders) MUST be drawn in an early layer BEFORE the face.
+   - Layer 3: Torso, Neck & Garments.
+   - Layer 4: Head & Face Skin Base (draw a completely enclosed contour of the head/jaw and fill it with `paint.bucket` in skin tone, sampleAllLayers: true). This creates an opaque base that cleanly covers any background lines and rear hair underneath!
+   - Layer 5: Facial Features (eyes, eyebrows, nose, mouth) MUST be drawn on top of the clean skin base.
+   - Layer 6: Foreground Framing Tendrils (ONLY hair curls framing the outer cheeks or resting on shoulders).
+   - Layer 7: Specular Highlights & Eye Catchlights.
+2. ABSOLUTELY FORBIDDEN:
+   - NEVER draw hair strokes, shading, or texture lines horizontally across the eyes, nose, or mouth! The face must remain pristine and unobstructed!
+   - NEVER draw hair texture after the facial features unless it is purely framing the side contours!
+3. HIGH FIDELITY FACIAL ANATOMY:
+   - Replicate the subject's facial features with high fidelity:
+     * Eyes: almond upper/lower eyelids, colored iris, dark pupil, white specular catchlight dots.
+     * Eyebrows: graceful arches matching the expression.
+     * Nose: sculpted bridge line and delicate nostril curves/shading.
+     * Lips: defined upper lip with cupid's bow, mouth center line, fuller lower lip with natural tone.
+   - Do NOT use crude scratches for the face. Allocate dedicated, distinct anatomical strokes for each feature.
 """
 
 
@@ -458,6 +501,114 @@ def adjust_color(hex_col: str | None, factor: float) -> str | None:
         return hex_col
 
 
+def is_facial_feature_stroke(name: str) -> bool:
+    """Check if a stroke name designates a facial feature that should be protected from broad washes/cross-hatching."""
+    n = name.lower()
+    return any(k in n for k in (
+        "eye", "pupil", "iris", "lid", "lash", "eyelash", "brow", "eyebrow",
+        "nose", "nostril", "lip", "mouth", "smile", "chin", "philtrum",
+        "cheek", "blush", "catchlight"
+    ))
+
+
+def is_hair_stroke(name: str) -> bool:
+    """Check if a stroke represents hair or hair texture."""
+    n = name.lower()
+    return any(k in n for k in ("hair", "curl", "lock", "tress", "strand", "bangs", "flow"))
+
+
+def get_face_feature_bounds(steps: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
+    """Find the bounding box (min_x, min_y, max_x, max_y) of facial features (eyes, nose, mouth)."""
+    pts: list[list[float]] = []
+    for s in steps:
+        if not isinstance(s, dict) or s.get("cmd") != "paint.stroke":
+            continue
+        p = s.get("params") or {}
+        name = str(p.get("name") or "").lower()
+        if is_facial_feature_stroke(name) and "face:" not in name and "silhouette" not in name and "head" not in name:
+            for pt in p.get("points") or []:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                    pts.append([float(pt[0]), float(pt[1])])
+    if len(pts) < 4:
+        return None
+    pad = 12.0
+    return (
+        min(p[0] for p in pts) - pad,
+        min(p[1] for p in pts) - pad,
+        max(p[0] for p in pts) + pad,
+        max(p[1] for p in pts) + pad,
+    )
+
+
+def sanitize_hair_strokes_against_face(
+    steps: list[dict[str, Any]],
+    face_box: tuple[float, float, float, float] | None,
+    allow_face_obstruction: bool = False,
+) -> list[dict[str, Any]]:
+    """Ensure hair texture strokes do not cut across the facial feature area (eyes, nose, mouth).
+
+    If a hair stroke traverses horizontally across the facial feature zone, split it into
+    left-side and right-side locks so the face remains clean and unobstructed.
+    """
+    if face_box is None or allow_face_obstruction:
+        return steps
+
+    fx0, fy0, fx1, fy1 = face_box
+    sanitized: list[dict[str, Any]] = []
+
+    for s in steps:
+        if not isinstance(s, dict) or s.get("cmd") != "paint.stroke":
+            sanitized.append(s)
+            continue
+
+        p = s.get("params") or {}
+        name = str(p.get("name") or "").lower()
+
+        # Only inspect hair or texture strokes
+        if not is_hair_stroke(name) and "texture" not in name:
+            sanitized.append(s)
+            continue
+
+        pts = p.get("points") or []
+        if len(pts) < 2:
+            sanitized.append(s)
+            continue
+
+        # Check if stroke enters the facial feature box
+        pts_in_face = [pt for pt in pts if fx0 <= pt[0] <= fx1 and fy0 <= pt[1] <= fy1]
+        if not pts_in_face:
+            sanitized.append(s)
+            continue
+
+        # If it enters the face box, split into left segment and right segment
+        left_pts = [pt for pt in pts if pt[0] < fx0]
+        right_pts = [pt for pt in pts if pt[0] > fx1]
+
+        added_any = False
+        if len(left_pts) >= 2:
+            s_left = dict(s)
+            p_left = dict(p)
+            p_left["name"] = f"{p.get('name', 'Hair')} (Left Lock)"
+            p_left["points"] = left_pts
+            s_left["params"] = p_left
+            sanitized.append(s_left)
+            added_any = True
+
+        if len(right_pts) >= 2:
+            s_right = dict(s)
+            p_right = dict(p)
+            p_right["name"] = f"{p.get('name', 'Hair')} (Right Lock)"
+            p_right["points"] = right_pts
+            s_right["params"] = p_right
+            sanitized.append(s_right)
+            added_any = True
+
+        if not added_any:
+            logger.info("Suppressed hair stroke '%s' that obstructed the face feature zone", p.get("name"))
+
+    return sanitized
+
+
 def densify_artwork_plan(
     plan: dict[str, Any],
     detail_level: int,
@@ -487,6 +638,12 @@ def densify_artwork_plan(
         plan_copy["style"] = style_preset.id
         return plan_copy
 
+    face_box = get_face_feature_bounds(steps)
+    non_feature_strokes = [
+        s for s in existing_strokes
+        if not is_facial_feature_stroke(str(s.get("params", {}).get("name", "")))
+    ]
+
     washes: list[dict[str, Any]] = []
     shadings: list[dict[str, Any]] = []
     contours: list[dict[str, Any]] = []
@@ -496,21 +653,24 @@ def densify_artwork_plan(
         p = s.get("params") or {}
         name = str(p.get("name") or "").lower()
         size = float(p.get("size") or 10.0)
+        is_feature = is_facial_feature_stroke(name)
+
         if any(k in name for k in ("highlight", "glint", "sparkle", "white", "rim", "glow")):
             highlights.append(s)
-        elif any(k in name for k in ("shade", "shadow", "dark", "under", "belly", "depth", "volume")):
+        elif not is_feature and any(k in name for k in ("shade", "shadow", "dark", "under", "belly", "depth", "volume")):
             shadings.append(s)
         elif size <= 8.0 or any(k in name for k in ("ink", "line", "contour", "sketch", "pencil", "pen")):
-            contours.append(s)
-        else:
+            if not is_feature:
+                contours.append(s)
+        elif not is_feature:
             washes.append(s)
 
     if not washes:
-        washes = existing_strokes
+        washes = non_feature_strokes or existing_strokes
     if not shadings:
         shadings = washes
     if not contours:
-        contours = existing_strokes
+        contours = non_feature_strokes or existing_strokes
     if not highlights:
         highlights = existing_strokes
 
@@ -523,6 +683,13 @@ def densify_artwork_plan(
     w_count, sh_count, c_count, h_count = 0, 0, 0, 0
 
     def add_child(parent_step: dict[str, Any], child_step: dict[str, Any]) -> None:
+        p_name = str(parent_step.get("params", {}).get("name", "")).lower()
+        if is_hair_stroke(p_name) and face_box is not None:
+            c_pts = child_step.get("params", {}).get("points") or []
+            fx0, fy0, fx1, fy1 = face_box
+            in_face = [pt for pt in c_pts if fx0 <= pt[0] <= fx1 and fy0 <= pt[1] <= fy1]
+            if in_face:
+                return  # Skip child stroke that would draw across the face
         key = id(parent_step)
         if key not in children_by_parent:
             children_by_parent[key] = []
@@ -839,8 +1006,12 @@ def densify_artwork_plan(
         if key in children_by_parent:
             final_steps.extend(children_by_parent[key])
 
+    prompt_str = str(plan.get("title") or "").lower()
+    allow_deviate = any(k in prompt_str for k in ("hair over face", "hair in face", "hair over eyes", "covering face", "obscured", "veil", "mask", "hidden face"))
+    cleaned_steps = sanitize_hair_strokes_against_face(final_steps, face_box, allow_face_obstruction=allow_deviate)
+
     plan_copy = dict(plan)
-    plan_copy["steps"] = final_steps
+    plan_copy["steps"] = cleaned_steps
     plan_copy["style"] = style_preset.id
     return plan_copy
 
@@ -871,7 +1042,10 @@ def compose_with_ollama(
         detail,
     )
 
+    is_portrait = is_portrait_or_face_prompt(prompt, images)
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+    if is_portrait or images:
+        style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
 
     if images:
         user_content = (
@@ -979,7 +1153,10 @@ def compose_with_openai(
     detail = max(1, min(config.detail_level, 25))
     detail_info = get_detail_guidance(detail)
 
+    is_portrait = is_portrait_or_face_prompt(prompt, images)
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+    if is_portrait or images:
+        style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
 
     if images:
         text_instruction = (
@@ -1103,6 +1280,6 @@ def plan_artwork(
 
     # 4. Built-in procedural fallback
     logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
-    plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style)
+    plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images)
     plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
     return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
