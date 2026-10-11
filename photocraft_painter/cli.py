@@ -15,10 +15,19 @@ from rich.prompt import Confirm, Prompt
 
 from photocraft_painter import __version__
 from photocraft_painter.artist import execute_live_drawing
-from photocraft_painter.composer import plan_artwork
+from photocraft_painter.composer import (
+    parse_prompt_and_images,
+    plan_artwork,
+    validate_image_files,
+)
 from photocraft_painter.config import PainterConfig
 from photocraft_painter.desktop import is_desktop_running, launch_desktop
 from photocraft_painter.mcp_client import PhotocraftMcpClient, connect_mcp_bridge
+from photocraft_painter.models import (
+    build_models_table,
+    get_all_model_choices,
+    resolve_model_selection,
+)
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
 console = Console()
@@ -51,19 +60,39 @@ async def draw_prompt(
     prompt_text: str,
     config: PainterConfig,
 ) -> None:
-    """Compose and animate drawing of a prompt."""
+    """Compose and animate drawing of a prompt (with optional vision reference images)."""
+    clean_text, images = parse_prompt_and_images(prompt_text)
+    try:
+        validate_image_files(images)
+    except Exception as e:
+        console.print(f"[bold red]✗ Image error:[/] {e}\n")
+        return
+
+    effective_prompt = clean_text or (
+        f"Recreate an expressive artist illustration inspired by the reference image{'s' if len(images) > 1 else ''}"
+        if images
+        else prompt_text
+    )
+
+    task_desc = f"'{effective_prompt}'"
+    if images:
+        img_names = ", ".join(f"'{p.name}'" for p in images)
+        task_desc += f" [dim](reference: {img_names})[/]"
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold cyan]Composing illustration plan for:[/] {task.description}"),
         console=console,
         transient=True,
     ) as progress:
-        progress.add_task(description=f"'{prompt_text}'", total=None)
-        plan, source = plan_artwork(prompt_text, config, config.default_width, config.default_height)
+        progress.add_task(description=task_desc, total=None)
+        plan, source = plan_artwork(effective_prompt, config, config.default_width, config.default_height, images=images)
 
-    title = plan.get("title", prompt_text)
+    title = plan.get("title", effective_prompt)
     steps = plan.get("steps", [])
     console.print(f"[bold green]✓[/] Composed [bold]{title}[/] ({len(steps)} steps via [cyan]{source}[/])")
+    if images:
+        console.print(f"  [dim]Visual reference from:[/] {', '.join(f'[cyan]{p}[/]' for p in images)}")
     console.print(f"[dim]Watching canvas update live in PhotoCraft...[/]")
 
     def on_progress(idx: int, total: int, name: str, step: dict[str, Any]) -> None:
@@ -98,7 +127,8 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[dim]Tip: Use file:<path> to reference images (e.g. file:/path/to/apple.png make a green apple)[/]\n"
     )
 
     while True:
@@ -143,6 +173,72 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 console.print("\n[dim]To switch styles, use: /style <name> (e.g. /style dreamlike)[/]\n")
             continue
 
+        if user_input.startswith(("/model", "/models")):
+            parts = user_input.split(maxsplit=1)
+            choices = get_all_model_choices(config.ollama_host)
+            current_active = config.ollama_model if config.provider == "ollama" else config.openai_model
+
+            if len(parts) > 1:
+                arg = parts[1].strip()
+                try:
+                    new_model, new_provider = resolve_model_selection(arg, choices)
+                    config.provider = new_provider
+                    if new_provider == "ollama":
+                        config.ollama_model = new_model
+                    else:
+                        config.openai_model = new_model
+
+                    console.print(
+                        f"[bold green]✓[/] Active model switched to: [bold cyan]{new_model}[/] "
+                        f"[dim](Provider: {new_provider.upper()})[/]\n"
+                    )
+                    if new_provider == "openai" and not config.openai_api_key:
+                        console.print(
+                            "[yellow]⚠ Note: OPENAI_API_KEY environment variable is not set. "
+                            "Cloud API requests may fail unless configured.[/]\n"
+                        )
+                except ValueError as err:
+                    console.print(f"[red]{err}[/]\n")
+            else:
+                table = build_models_table(choices, current_active, config.provider)
+                console.print(table)
+                console.print(
+                    f"\n[bold]Current Active Model:[/] [bold cyan]{current_active}[/] "
+                    f"[dim](Provider: {config.provider.upper()})[/]"
+                )
+                try:
+                    selection = Prompt.ask(
+                        "\n[bold magenta]Select model[/] [dim](enter # or name, or press Enter to keep current)[/]",
+                        default="",
+                    ).strip()
+                except (KeyboardInterrupt, EOFError):
+                    console.print("\n")
+                    continue
+
+                if selection:
+                    try:
+                        new_model, new_provider = resolve_model_selection(selection, choices)
+                        config.provider = new_provider
+                        if new_provider == "ollama":
+                            config.ollama_model = new_model
+                        else:
+                            config.openai_model = new_model
+
+                        console.print(
+                            f"[bold green]✓[/] Active model switched to: [bold cyan]{new_model}[/] "
+                            f"[dim](Provider: {new_provider.upper()})[/]\n"
+                        )
+                        if new_provider == "openai" and not config.openai_api_key:
+                            console.print(
+                                "[yellow]⚠ Note: OPENAI_API_KEY environment variable is not set. "
+                                "Cloud API requests may fail unless configured.[/]\n"
+                            )
+                    except ValueError as err:
+                        console.print(f"[red]{err}[/]\n")
+                else:
+                    console.print(f"[dim]Keeping current model: {current_active}[/]\n")
+            continue
+
         if user_input.startswith("/detail"):
             parts = user_input.split(maxsplit=1)
             if len(parts) > 1:
@@ -181,13 +277,17 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
 
         if user_input == "/help":
             console.print(
-                "[bold cyan]Available Commands:[/]\n"
-                "  <any text>        Compose and draw illustration live in PhotoCraft\n"
+                "[bold cyan]Available Commands & Syntax:[/]\n"
+                "  <prompt>          Compose and draw illustration live in PhotoCraft\n"
+                "  file:<path> <msg> Use reference image(s) to inspire composition (e.g. file:/path/to/apple.png make a green apple)\n"
                 "  /style            List all available artistic styles and show active style\n"
                 "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly)\n"
+                "  /model            List local & recommended models (https://ollama.com/search) with interactive selection\n"
+                "  /model <name|#>   Switch active AI model on the fly by name or list number\n"
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
                 "  /speed <sec>      Set live step delay (e.g. 0.05 for fast, 0.2 for slower)\n"
+                "  /help             Display this help guide\n"
                 "  /quit             Exit the program\n"
             )
             continue
@@ -200,17 +300,24 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
 
 async def async_main(args: argparse.Namespace) -> None:
     """Entry point connecting to desktop and executing prompt or REPL."""
+    provider = args.provider
+    if not provider:
+        if args.model and any(args.model.lower().startswith(p) for p in ("gpt-", "o1-", "o3-")):
+            provider = "openai"
+        else:
+            provider = os.getenv("PAINTER_PROVIDER") or "ollama"
+
     config = PainterConfig(
         control_port=args.port,
         step_delay=args.delay,
         style=args.style,
         detail_level=args.detail,
-        provider=args.provider or os.getenv("PAINTER_PROVIDER") or "ollama",
+        provider=provider,
         ollama_host=args.ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434",
         ollama_model=args.model or os.getenv("OLLAMA_MODEL") or "ornith-1.5:35b",
         openai_api_key=args.api_key or os.getenv("OPENAI_API_KEY"),
         openai_base_url=args.base_url or os.getenv("OPENAI_BASE_URL"),
-        openai_model=args.openai_model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
+        openai_model=args.openai_model or (args.model if provider == "openai" else "gpt-4o-mini"),
     )
 
     # Check if PhotoCraft desktop is running

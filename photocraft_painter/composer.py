@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -269,6 +270,39 @@ def extract_json_from_response(text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Decoded JSON is not an object dictionary")
     return data
+
+
+def parse_prompt_and_images(raw_prompt: str) -> tuple[str, list[Path]]:
+    """Parse a prompt string and extract image file paths designated with 'file:<path>'.
+
+    Supports:
+      file:/home/jp/apple.png make a green apple
+      file:"/path with spaces/img.jpg"
+      file:'/path/img.webp'
+      file:~/images/apple.png
+    """
+    pattern = r'(?:^|\s)file:(?:"([^"]+)"|\'([^\']+)\'|(\S+))'
+    images: list[Path] = []
+
+    def replacer(match: re.Match) -> str:
+        path_str = match.group(1) or match.group(2) or match.group(3)
+        if path_str:
+            images.append(Path(path_str).expanduser())
+        return " "
+
+    clean_text = re.sub(pattern, replacer, raw_prompt)
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
+    return clean_text, images
+
+
+def validate_image_files(images: list[Path]) -> None:
+    """Validate that reference image files exist and are regular files."""
+    for img in images:
+        if not img.exists():
+            raise FileNotFoundError(f"Reference image not found: {img}")
+        if not img.is_file():
+            raise ValueError(f"Path is not a regular file: {img}")
+
 
 
 def get_detail_guidance(level: int) -> str:
@@ -695,9 +729,13 @@ def densify_artwork_plan(
 
 
 def compose_with_ollama(
-    prompt: str, config: PainterConfig, width: int = 800, height: int = 800
+    prompt: str,
+    config: PainterConfig,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
 ) -> dict[str, Any]:
-    """Generate drawing steps using local Ollama model."""
+    """Generate drawing steps using local Ollama model (with optional vision images)."""
     import ollama
 
     client = ollama.Client(host=config.ollama_host)
@@ -706,38 +744,68 @@ def compose_with_ollama(
     detail = max(1, min(config.detail_level, 25))
     detail_info = get_detail_guidance(detail)
 
+    img_info = f" with {len(images)} reference image(s)" if images else ""
     logger.info(
-        "Querying Ollama at %s with model '%s' (style: %s, detail %d/25)...",
+        "Querying Ollama at %s with model '%s'%s (style: %s, detail %d/25)...",
         config.ollama_host,
         model,
+        img_info,
         style_preset.name,
         detail,
     )
 
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
 
-    res = client.chat(
-        model=model,
-        messages=[
-            {"role": "system", "content": style_system},
-            {
-                "role": "user",
-                "content": (
-                    f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
-                    f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
-                    f"Color Mood: {style_preset.color_mood}\n"
-                    f"Requested Detail: {detail_info}\n"
-                    "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
-                    "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
-                ),
+    if images:
+        user_content = (
+            f"Visual reference image{'s have' if len(images) > 1 else ' has'} been provided.\n"
+            f"Carefully study the shapes, anatomy, subject, composition, and colors of the reference.\n"
+            f"Create an expressive artist illustration inspired by it for '{prompt}' on an {width}x{height} canvas.\n"
+            f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+            f"Color Mood: {style_preset.color_mood}\n"
+            f"Requested Detail: {detail_info}\n"
+            "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
+            "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+        )
+        user_msg: dict[str, Any] = {
+            "role": "user",
+            "content": user_content,
+            "images": [str(p) for p in images],
+        }
+    else:
+        user_msg = {
+            "role": "user",
+            "content": (
+                f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
+                f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+                f"Color Mood: {style_preset.color_mood}\n"
+                f"Requested Detail: {detail_info}\n"
+                "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
+                "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+            ),
+        }
+
+    try:
+        res = client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": style_system},
+                user_msg,
+            ],
+            options={
+                "num_ctx": 16384,
+                "num_predict": 6144,
+                "temperature": 0.35,
             },
-        ],
-        options={
-            "num_ctx": 16384,
-            "num_predict": 6144,
-            "temperature": 0.35,
-        },
-    )
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if "multimodal" in err_msg.lower() or "does not support images" in err_msg.lower():
+            raise ValueError(
+                f"Model '{model}' does not support vision/image input. "
+                f"Please switch to a vision model (e.g. /model llama3.2-vision:11b or /model gpt-4o-mini)."
+            ) from e
+        raise
 
     content = res.message.content or ""
     if not content:
@@ -773,9 +841,14 @@ def compose_with_ollama(
 
 
 def compose_with_openai(
-    prompt: str, config: PainterConfig, width: int = 800, height: int = 800
+    prompt: str,
+    config: PainterConfig,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
 ) -> dict[str, Any]:
-    """Generate drawing steps using OpenAI-compatible API."""
+    """Generate drawing steps using OpenAI-compatible API (with optional vision images)."""
+    import base64
     from openai import OpenAI
 
     client = OpenAI(
@@ -788,20 +861,44 @@ def compose_with_openai(
 
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
 
+    if images:
+        text_instruction = (
+            f"Visual reference image{'s have' if len(images) > 1 else ' has'} been provided.\n"
+            f"Carefully study the shapes, anatomy, subject, composition, and colors of the reference.\n"
+            f"Create an expressive artist illustration inspired by it for '{prompt}' on an {width}x{height} canvas.\n"
+            f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+            f"Color Mood: {style_preset.color_mood}\n"
+            f"Requested Detail: {detail_info}\n"
+            "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+        )
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_instruction}]
+        for p in images:
+            b64_data = base64.b64encode(p.read_bytes()).decode("utf-8")
+            ext = p.suffix.lstrip(".").lower() or "png"
+            if ext == "jpg":
+                ext = "jpeg"
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/{ext};base64,{b64_data}"},
+            })
+        user_msg: dict[str, Any] = {"role": "user", "content": content_parts}
+    else:
+        user_msg = {
+            "role": "user",
+            "content": (
+                f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
+                f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+                f"Color Mood: {style_preset.color_mood}\n"
+                f"Requested Detail: {detail_info}\n"
+                "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+            ),
+        }
+
     response = client.chat.completions.create(
         model=config.openai_model,
         messages=[
             {"role": "system", "content": style_system},
-            {
-                "role": "user",
-                "content": (
-                    f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
-                    f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
-                    f"Color Mood: {style_preset.color_mood}\n"
-                    f"Requested Detail: {detail_info}\n"
-                    "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
-                ),
-            },
+            user_msg,
         ],
         response_format={"type": "json_object"},
         temperature=0.35,
@@ -835,31 +932,53 @@ def compose_with_openai(
 
 
 def plan_artwork(
-    prompt: str, config: PainterConfig, width: int = 800, height: int = 800
+    prompt: str,
+    config: PainterConfig,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Plan drawing steps for a prompt. Defaults to Ollama, supports OpenAI, and falls back to procedural."""
+    """Plan drawing steps for a prompt. Honors config.provider (ollama/openai) and falls back to procedural."""
+    if images is None:
+        clean_text, extracted_images = parse_prompt_and_images(prompt)
+        prompt = clean_text or (
+            f"Recreate an expressive artist illustration inspired by the reference image"
+            if extracted_images
+            else prompt
+        )
+        images = extracted_images
+
     detail = max(1, min(config.detail_level, 25))
     style_preset = get_style(config.style)
 
-    # 1. Try Ollama (Default)
-    if config.provider == "ollama" or (not config.openai_api_key and not config.openai_base_url):
+    # 1. If OpenAI provider is requested
+    if config.provider == "openai":
         try:
-            plan = compose_with_ollama(prompt, config, width, height)
-            if plan.get("steps"):
-                return plan, f"Ollama ({config.ollama_model})"
-        except Exception as e:
-            logger.warning("Ollama composition failed: %s", e)
-
-    # 2. Try OpenAI if explicitly configured or as secondary option
-    if config.openai_api_key or config.openai_base_url:
-        try:
-            plan = compose_with_openai(prompt, config, width, height)
+            plan = compose_with_openai(prompt, config, width, height, images=images)
             if plan.get("steps"):
                 return plan, f"OpenAI ({config.openai_model})"
         except Exception as e:
             logger.warning("OpenAI composition failed: %s", e)
 
-    # 3. Built-in procedural fallback
+    # 2. Try Ollama (Default or secondary)
+    if config.provider == "ollama" or (not config.openai_api_key and not config.openai_base_url):
+        try:
+            plan = compose_with_ollama(prompt, config, width, height, images=images)
+            if plan.get("steps"):
+                return plan, f"Ollama ({config.ollama_model})"
+        except Exception as e:
+            logger.warning("Ollama composition failed: %s", e)
+
+    # 3. Try OpenAI as secondary if not already tried and keys are present
+    if config.provider != "openai" and (config.openai_api_key or config.openai_base_url):
+        try:
+            plan = compose_with_openai(prompt, config, width, height, images=images)
+            if plan.get("steps"):
+                return plan, f"OpenAI ({config.openai_model})"
+        except Exception as e:
+            logger.warning("OpenAI composition failed: %s", e)
+
+    # 4. Built-in procedural fallback
     logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
     plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style)
     plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)

@@ -1,12 +1,18 @@
-"""Unit tests for PhotoCraft Painter composer, stroke generation, step normalization, and configuration."""
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from photocraft_painter.config import PainterConfig
 from photocraft_painter.composer import (
+    compose_with_ollama,
     densify_artwork_plan,
     extract_json_from_response,
     normalize_color,
     normalize_step,
+    parse_prompt_and_images,
     plan_artwork,
+    validate_image_files,
 )
 from photocraft_painter.fallback_composer import (
     plan_fallback,
@@ -371,6 +377,112 @@ def test_plan_artwork_style_forwarding():
     assert "[Dreamlike]" in src_d
     assert "[Dreamlike]" in plan_d["title"]
     assert plan_d["style"] == "dreamlike"
+
+
+def test_plan_artwork_provider_routing():
+    cfg = PainterConfig(provider="none", ollama_host="http://127.0.0.1:59999")
+    plan, src = plan_artwork("rubber duck", cfg)
+    assert "Built-in" in src
+    assert "Rubber Duck" in plan["title"]
+
+
+def test_parse_prompt_and_images_no_images():
+    prompt, images = parse_prompt_and_images("a rubber duck in water")
+    assert prompt == "a rubber duck in water"
+    assert images == []
+
+
+def test_parse_prompt_and_images_single_image():
+    prompt, images = parse_prompt_and_images("file:/home/jp/apple.png make a green apple")
+    assert prompt == "make a green apple"
+    assert images == [Path("/home/jp/apple.png")]
+
+    # Position at end of prompt
+    prompt2, images2 = parse_prompt_and_images("make a green apple file:/home/jp/apple.png")
+    assert prompt2 == "make a green apple"
+    assert images2 == [Path("/home/jp/apple.png")]
+
+
+def test_parse_prompt_and_images_quoted_paths():
+    prompt1, images1 = parse_prompt_and_images('file:"/home/jp/My Images/apple photo.png" draw this in sketchy style')
+    assert prompt1 == "draw this in sketchy style"
+    assert images1 == [Path("/home/jp/My Images/apple photo.png")]
+
+    prompt2, images2 = parse_prompt_and_images("file:'/home/jp/path with spaces/pic.jpg' paint this")
+    assert prompt2 == "paint this"
+    assert images2 == [Path("/home/jp/path with spaces/pic.jpg")]
+
+
+def test_parse_prompt_and_images_multiple_images():
+    prompt, images = parse_prompt_and_images("file:/tmp/a.png file:/tmp/b.jpg combine these into a landscape")
+    assert prompt == "combine these into a landscape"
+    assert images == [Path("/tmp/a.png"), Path("/tmp/b.jpg")]
+
+
+def test_parse_prompt_and_images_tilde_expansion():
+    prompt, images = parse_prompt_and_images("file:~/photo.png")
+    assert prompt == ""
+    assert images == [Path.home() / "photo.png"]
+
+
+def test_parse_prompt_and_images_empty_text():
+    prompt, images = parse_prompt_and_images("file:/tmp/apple.png")
+    assert prompt == ""
+    assert images == [Path("/tmp/apple.png")]
+
+
+def test_validate_image_files(tmp_path):
+    # Valid existing file
+    valid_file = tmp_path / "test.png"
+    valid_file.write_bytes(b"fake png data")
+    validate_image_files([valid_file])  # Should not raise
+
+    # Missing file
+    missing_file = tmp_path / "does_not_exist.png"
+    with pytest.raises(FileNotFoundError, match="Reference image not found"):
+        validate_image_files([missing_file])
+
+    # Directory instead of file
+    sub_dir = tmp_path / "subdir"
+    sub_dir.mkdir()
+    with pytest.raises(ValueError, match="Path is not a regular file"):
+        validate_image_files([sub_dir])
+
+
+def test_plan_artwork_with_image_forwarding(tmp_path):
+    # Tests that plan_artwork extracts image from prompt, forwards it, and gracefully falls back to procedural composer
+    img = tmp_path / "ref.png"
+    img.write_bytes(b"dummy")
+
+    cfg = PainterConfig(provider="none")
+    raw_prompt = f"file:{img} a rubber duck"
+    plan, src = plan_artwork(raw_prompt, cfg)
+
+    assert "Rubber Duck" in plan["title"]
+    assert "Built-in" in src
+
+
+def test_compose_with_ollama_non_multimodal_error(tmp_path):
+    img = tmp_path / "duck.png"
+    img.write_bytes(b"dummy")
+
+    cfg = PainterConfig(provider="ollama", ollama_model="text-only-model:7b")
+
+    # Mock ollama.Client chat raising ResponseError indicating non-multimodal model
+    mock_resp_error = Exception("status_code: 400 - Multimodal data provided, but model does not support multimodal requests.")
+
+    with patch("ollama.Client") as mock_client_cls:
+        mock_instance = MagicMock()
+        mock_instance.chat.side_effect = mock_resp_error
+        mock_client_cls.return_value = mock_instance
+
+        with pytest.raises(ValueError) as exc_info:
+            compose_with_ollama("draw this duck", cfg, 800, 800, images=[img])
+
+        assert "does not support vision/image input" in str(exc_info.value)
+        assert "llama3.2-vision:11b" in str(exc_info.value)
+
+
 
 
 
