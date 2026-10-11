@@ -95,6 +95,7 @@ uv run photocraft-painter --provider openai --model "gpt-4o-mini" "a neon city"
 | Flag | Description | Default |
 |---|---|---|
 | `prompt` | Direct prompt to draw immediately | *(Opens interactive REPL)* |
+| `--style`, `-s` | Overarching artistic style (`realistic`, `dreamlike`, `abstract`, `sketchy`, `cartoon`, `painterly`) | `realistic` |
 | `--detail`, `-d` | Drawing detail level from `1` (minimal) to `25` (~10 to ~250 brushstrokes) | `5` |
 | `--model` | Model name | `ornith-1.5:35b` |
 | `--ollama-host` | Ollama API endpoint | `http://127.0.0.1:11434` |
@@ -102,6 +103,15 @@ uv run photocraft-painter --provider openai --model "gpt-4o-mini" "a neon city"
 | `--delay` | Delay in seconds between steps to visualize progress | `0.12` |
 | `--launch` | Automatically launch PhotoCraft desktop if not running | `false` |
 | `--provider` | AI provider (`ollama` or `openai`) | `ollama` |
+
+### Overarching Artistic Styles (`/style`)
+The artistic style sits above all other controls, governing AI aesthetic guidance, color palette selection, and stroke rendering dynamics:
+* **`realistic` (Default):** Natural lighting, volumetric chiaroscuro shading, smooth feathered transitions, true-to-life values.
+* **`dreamlike`:** Ethereal surrealism, glowing translucent washes, pastel & celestial tones, soft luminous aura halos.
+* **`abstract`:** Bold geometric & organic deconstructed planes, dynamic expressive angles, vibrant color pops and clashes.
+* **`sketchy`:** Loose gestural graphite & charcoal pencil lines, visible construction guides, directional cross-hatching, monochrome / sepia tones.
+* **`cartoon`:** Vibrant cel-shaded animation, crisp saturated primary fills, bold confident ink outlines, punchy highlight gleams.
+* **`painterly`:** Rich oil & acrylic impasto, expressive directional brushwork, textured color sweeps, warm/cool temperature vibrations.
 
 ### Detail Levels (1 to 25)
 Detail scales the number and density of brushstrokes across all layers (~10 brushstrokes per detail level):
@@ -117,6 +127,8 @@ Detail scales the number and density of brushstrokes across all layers (~10 brus
 ## Interactive REPL Commands
 
 * `<prompt text>`: Generate illustration and draw live on screen (each prompt starts a fresh canvas).
+* `/style`: List all available artistic styles and highlight the active style.
+* `/style <name>`: Switch the active artistic style (e.g. `/style dreamlike`, `/style cartoon`, `/style sketchy`).
 * `/detail <1-25>`: Adjust drawing detail level dynamically (e.g. `/detail 5` for ~50 strokes, `/detail 25` for ~250 strokes).
 * `/export <file.png>`: Export active document as PNG.
 * `/speed <sec>`: Change live animation speed (e.g. `/speed 0.05` for faster drawing).

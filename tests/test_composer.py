@@ -8,13 +8,18 @@ from photocraft_painter.composer import (
     normalize_step,
     plan_artwork,
 )
-from photocraft_painter.fallback_composer import plan_painterly_rubber_duck, plan_painterly_sunset
+from photocraft_painter.fallback_composer import (
+    plan_fallback,
+    plan_painterly_rubber_duck,
+    plan_painterly_sunset,
+)
 from photocraft_painter.strokes import (
     stroke_bezier,
     stroke_line,
     stroke_sketch_oval,
     stroke_painterly_fill,
 )
+from photocraft_painter.styles import STYLE_PRESETS, get_style
 
 
 def test_config_defaults():
@@ -227,5 +232,145 @@ def test_densify_artwork_plan_scales_ai_models():
             assert len(st["params"]["points"]) >= 2
             assert st["params"]["size"] > 0
             assert st["params"]["color"].startswith("#")
+
+
+def test_style_presets_and_lookup():
+    expected_styles = ["realistic", "dreamlike", "abstract", "sketchy", "cartoon", "painterly"]
+    for s_name in expected_styles:
+        assert s_name in STYLE_PRESETS
+        preset = get_style(s_name)
+        assert preset.id == s_name
+        assert len(preset.name) > 0
+        assert len(preset.description) > 0
+        assert len(preset.ai_guidance) > 0
+
+    # Case-insensitive resolution
+    assert get_style("DREAMLIKE").id == "dreamlike"
+    assert get_style("Cartoon").id == "cartoon"
+    assert get_style("   sKeTchY  ").id == "sketchy"
+
+    # Default fallback to realistic for missing/invalid
+    assert get_style(None).id == "realistic"
+    assert get_style("").id == "realistic"
+    assert get_style("nonexistent_style_xyz").id == "realistic"
+
+
+def test_style_color_adjustment():
+    sketchy = get_style("sketchy")
+    cartoon = get_style("cartoon")
+    dreamlike = get_style("dreamlike")
+    abstract = get_style("abstract")
+    realistic = get_style("realistic")
+
+    orig_color = "#3498db"
+    # Sketchy should desaturate towards graphite
+    adj_sketchy = sketchy.adjust_color(orig_color)
+    assert adj_sketchy.startswith("#")
+    assert adj_sketchy != orig_color
+
+    # Cartoon should enhance contrast
+    adj_cartoon = cartoon.adjust_color(orig_color)
+    assert adj_cartoon.startswith("#")
+
+    # Dreamlike shifts towards luminous pastel
+    adj_dream = dreamlike.adjust_color(orig_color)
+    assert adj_dream.startswith("#")
+
+    # Abstract pops vibrant tones
+    adj_abs = abstract.adjust_color(orig_color)
+    assert adj_abs.startswith("#")
+
+    # None or non-hex returns as-is safely
+    assert realistic.adjust_color(None) is None
+    assert realistic.adjust_color("transparent") == "transparent"
+
+
+def test_densify_artwork_plan_with_styles():
+    raw_plan = {
+        "title": "A Bird",
+        "steps": [
+            {"cmd": "layer.new.layer", "params": {"name": "1. Sketch"}},
+            {"cmd": "paint.stroke", "params": {"name": "Guide Oval", "points": [[100, 100], [200, 200]], "size": 3.0, "color": "#555555"}},
+            {"cmd": "layer.new.layer", "params": {"name": "2. Body Paint"}},
+            {"cmd": "paint.stroke", "params": {"name": "Body Wash", "points": [[120, 300], [400, 300]], "size": 30.0, "color": "#3498db"}},
+            {"cmd": "layer.new.layer", "params": {"name": "3. Shading"}},
+            {"cmd": "paint.stroke", "params": {"name": "Belly Shade", "points": [[150, 350], [350, 350]], "size": 18.0, "color": "#1b4f72"}},
+            {"cmd": "layer.new.layer", "params": {"name": "4. Ink Contours"}},
+            {"cmd": "paint.stroke", "params": {"name": "Wing Ink", "points": [[100, 320], [300, 320]], "size": 4.0, "color": "#111116"}},
+            {"cmd": "layer.new.layer", "params": {"name": "5. Highlights"}},
+            {"cmd": "paint.stroke", "params": {"name": "Eye Highlight", "points": [[200, 280], [220, 280]], "size": 5.0, "color": "#ffffff"}},
+        ],
+    }
+
+    # Cartoon style densification produces solid crisp outlines
+    plan_cartoon = densify_artwork_plan(raw_plan, detail_level=10, style="cartoon")
+    assert plan_cartoon["style"] == "cartoon"
+    cartoon_contours = [
+        s for s in plan_cartoon["steps"]
+        if s.get("cmd") == "paint.stroke" and "Ink Contour" in s["params"].get("name", "")
+    ]
+    assert len(cartoon_contours) > 0
+    for c in cartoon_contours:
+        assert c["params"]["hardness"] == 1.0
+        assert c["params"]["opacity"] == 1.0
+
+    # Sketchy style densification produces pencil guides & hatching
+    plan_sketchy = densify_artwork_plan(raw_plan, detail_level=10, style="sketchy")
+    assert plan_sketchy["style"] == "sketchy"
+    sketchy_hatches = [
+        s for s in plan_sketchy["steps"]
+        if s.get("cmd") == "paint.stroke" and "Pencil Hatch" in s["params"].get("name", "")
+    ]
+    assert len(sketchy_hatches) > 0
+    for h in sketchy_hatches:
+        assert h["params"]["hardness"] == 0.9
+
+    # Dreamlike style densification produces soft luminous aura flares
+    plan_dream = densify_artwork_plan(raw_plan, detail_level=10, style="dreamlike")
+    assert plan_dream["style"] == "dreamlike"
+    dream_flares = [
+        s for s in plan_dream["steps"]
+        if s.get("cmd") == "paint.stroke" and "Aura Flare" in s["params"].get("name", "")
+    ]
+    assert len(dream_flares) > 0
+    for f in dream_flares:
+        assert f["params"]["hardness"] == 0.5
+
+
+def test_plan_fallback_with_styles():
+    duck_dream = plan_fallback("rubber duck", style="dreamlike")
+    assert "Dreamlike" in duck_dream["title"]
+    assert duck_dream["style"] == "dreamlike"
+    assert duck_dream["background"] == "#16122c"
+
+    car_sketch = plan_fallback("a red racecar", style="sketchy")
+    assert "Sketchy" in car_sketch["title"]
+    assert car_sketch["style"] == "sketchy"
+    assert car_sketch["background"] == "#fdfefe"
+
+    sunset_cartoon = plan_fallback("mountain sunset", style="cartoon")
+    assert "Cartoon" in sunset_cartoon["title"]
+    assert sunset_cartoon["style"] == "cartoon"
+    assert sunset_cartoon["background"] == "#f0f4f8"
+
+    dynamic_abstract = plan_fallback("cup of coffee", style="abstract")
+    assert "Abstract" in dynamic_abstract["title"]
+    assert dynamic_abstract["style"] == "abstract"
+    assert dynamic_abstract["background"] == "#17202a"
+
+
+def test_plan_artwork_style_forwarding():
+    cfg_cartoon = PainterConfig(provider="none", style="cartoon", detail_level=5)
+    plan_c, src_c = plan_artwork("rubber duck", cfg_cartoon)
+    assert "[Cartoon]" in src_c
+    assert "[Cartoon]" in plan_c["title"]
+    assert plan_c["style"] == "cartoon"
+
+    cfg_dream = PainterConfig(provider="none", style="dreamlike", detail_level=8)
+    plan_d, src_d = plan_artwork("mountain sunset", cfg_dream)
+    assert "[Dreamlike]" in src_d
+    assert "[Dreamlike]" in plan_d["title"]
+    assert plan_d["style"] == "dreamlike"
+
 
 

@@ -19,6 +19,7 @@ from photocraft_painter.composer import plan_artwork
 from photocraft_painter.config import PainterConfig
 from photocraft_painter.desktop import is_desktop_running, launch_desktop
 from photocraft_painter.mcp_client import PhotocraftMcpClient, connect_mcp_bridge
+from photocraft_painter.styles import STYLE_PRESETS, get_style
 
 console = Console()
 
@@ -32,11 +33,14 @@ def print_banner(config: PainterConfig) -> None:
         engine_name = f"OpenAI ({config.openai_model})"
         engine_target = config.openai_base_url or "api.openai.com"
 
+    style_preset = get_style(config.style)
+
     text = (
         f"[bold cyan]PhotoCraft Painter[/] [dim]v{__version__}[/]\n"
-        f"[dim]Bridge Target:[/]  [green]127.0.0.1:{config.control_port}[/]\n"
-        f"[dim]AI Composer:[/]    [yellow]{engine_name}[/] [dim]at[/] [cyan]{engine_target}[/]\n"
+        f"[dim]Artistic Style:[/] [bold cyan]{style_preset.name.upper()}[/] [dim]({style_preset.description})[/]\n"
         f"[dim]Detail Level:[/]   [bold yellow]{config.detail_level}/25[/] [dim](~{config.detail_level * 10} brushstrokes across all layers)[/]\n"
+        f"[dim]AI Composer:[/]    [yellow]{engine_name}[/] [dim]at[/] [cyan]{engine_target}[/]\n"
+        f"[dim]Bridge Target:[/]  [green]127.0.0.1:{config.control_port}[/]\n"
         f"[dim]Drawing Speed:[/]  [magenta]{config.step_delay}s per step[/]"
     )
     console.print(Panel(text, title="🎨 PhotoCraft Live MCP Painter", border_style="cyan"))
@@ -94,7 +98,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
     )
 
     while True:
@@ -110,6 +114,34 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
         if user_input.lower() in ("/quit", "/exit", "exit", "quit"):
             console.print("[dim]Goodbye![/]")
             break
+
+        if user_input.startswith("/style"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) > 1:
+                requested_style = parts[1].strip().lower()
+                if requested_style in STYLE_PRESETS:
+                    config.style = requested_style
+                    preset = STYLE_PRESETS[requested_style]
+                    console.print(
+                        f"[bold green]✓[/] Artistic style set to [bold cyan]{preset.name.upper()}[/]\n"
+                        f"  [dim]{preset.description}[/]\n"
+                    )
+                else:
+                    available = ", ".join(f"[bold cyan]{k}[/]" for k in STYLE_PRESETS.keys())
+                    console.print(
+                        f"[red]Unknown style '{parts[1]}'.[/] Available styles: {available}\n"
+                    )
+            else:
+                current_preset = get_style(config.style)
+                console.print(
+                    f"[bold]Active Artistic Style:[/] [bold cyan]{current_preset.name.upper()}[/] [dim]({current_preset.description})[/]\n"
+                    f"[bold]Available Styles:[/]"
+                )
+                for k, p in STYLE_PRESETS.items():
+                    active_marker = "[bold green]▶ (active)[/]" if k == current_preset.id else "  "
+                    console.print(f"  {active_marker} [bold cyan]{p.id:10s}[/] : {p.description}")
+                console.print("\n[dim]To switch styles, use: /style <name> (e.g. /style dreamlike)[/]\n")
+            continue
 
         if user_input.startswith("/detail"):
             parts = user_input.split(maxsplit=1)
@@ -151,6 +183,8 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
             console.print(
                 "[bold cyan]Available Commands:[/]\n"
                 "  <any text>        Compose and draw illustration live in PhotoCraft\n"
+                "  /style            List all available artistic styles and show active style\n"
+                "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly)\n"
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
                 "  /speed <sec>      Set live step delay (e.g. 0.05 for fast, 0.2 for slower)\n"
@@ -169,6 +203,7 @@ async def async_main(args: argparse.Namespace) -> None:
     config = PainterConfig(
         control_port=args.port,
         step_delay=args.delay,
+        style=args.style,
         detail_level=args.detail,
         provider=args.provider or os.getenv("PAINTER_PROVIDER") or "ollama",
         ollama_host=args.ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434",
@@ -228,6 +263,14 @@ def main() -> None:
     parser.add_argument("prompt", nargs="?", help="Direct prompt to draw immediately")
     parser.add_argument("--port", type=int, default=7878, help="PhotoCraft control port (default: 7878)")
     parser.add_argument("--delay", type=float, default=0.12, help="Animation delay between steps in seconds (default: 0.12)")
+    parser.add_argument(
+        "--style",
+        "-s",
+        type=str,
+        default=os.getenv("PAINTER_STYLE") or "realistic",
+        choices=list(STYLE_PRESETS.keys()),
+        help=f"Overarching artistic style (choices: {', '.join(STYLE_PRESETS.keys())}; default: realistic)",
+    )
     parser.add_argument(
         "--detail",
         "-d",

@@ -37,6 +37,11 @@ class PainterConfig:
     default_width: int = 800
     default_height: int = 800
 
+    # Artistic style preset: realistic, dreamlike, abstract, sketchy, cartoon, painterly
+    style: str = field(
+        default_factory=lambda: os.getenv("PAINTER_STYLE") or "realistic"
+    )
+
     # Detail level: 1 (minimal) to 25 (ultra detail with ~250 brushstrokes)
     detail_level: int = 5
 

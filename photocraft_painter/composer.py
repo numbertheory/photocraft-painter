@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from photocraft_painter.fallback_composer import plan_fallback
 from photocraft_painter.strokes import smooth_path, stroke_line
+from photocraft_painter.styles import STYLE_PRESETS, get_style
 
 if TYPE_CHECKING:
     from photocraft_painter.config import PainterConfig
@@ -307,25 +308,33 @@ def adjust_color(hex_col: str | None, factor: float) -> str | None:
 
 
 def densify_artwork_plan(
-    plan: dict[str, Any], detail_level: int, target_strokes_per_level: int = 10
+    plan: dict[str, Any],
+    detail_level: int,
+    target_strokes_per_level: int = 10,
+    style: str = "realistic",
 ) -> dict[str, Any]:
-    """Expand and densify artwork brushstrokes to match the requested detail level (1 to 25).
+    """Expand and densify artwork brushstrokes to match the requested detail level (1 to 25) and style.
 
     If an AI model (Ollama / OpenAI) generates a foundation of ~30-50 master strokes,
     this engine generates rich multi-pass washes, form cross-hatching, calligraphy accents,
-    and specular highlights, preserving layers so that at detail level 25, ~250 brushstrokes
-    are rendered.
+    and specular highlights shaped by the selected style preset (realistic, dreamlike, abstract,
+    sketchy, cartoon, painterly).
     """
+    style_preset = get_style(style)
     steps = plan.get("steps") or []
     existing_strokes = [s for s in steps if isinstance(s, dict) and s.get("cmd") == "paint.stroke"]
     if not existing_strokes:
-        return plan
+        plan_copy = dict(plan)
+        plan_copy["style"] = style_preset.id
+        return plan_copy
 
     detail = max(1, min(detail_level, 25))
     target = max(len(existing_strokes), int(round(detail * target_strokes_per_level)))
     needed = target - len(existing_strokes)
     if needed <= 0:
-        return plan
+        plan_copy = dict(plan)
+        plan_copy["style"] = style_preset.id
+        return plan_copy
 
     washes: list[dict[str, Any]] = []
     shadings: list[dict[str, Any]] = []
@@ -379,8 +388,8 @@ def densify_artwork_plan(
         name = str(p.get("name") or "Wash")
         size = float(p.get("size") or 25.0)
         col = p.get("color")
-        hardness = float(p.get("hardness") or 0.6)
-        opacity = float(p.get("opacity") or 0.85)
+        hardness = style_preset.wash_hardness
+        opacity = style_preset.wash_opacity
 
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
@@ -393,18 +402,26 @@ def densify_artwork_plan(
                 break
             w_count += 1
             dist = (pass_i * 0.22) * size * (1 if w_count % 2 == 1 else -1)
-            off_pts = [[round(pt[0] + nx * dist, 1), round(pt[1] + ny * dist, 1)] for pt in pts]
+            wob = style_preset.wobble * 2.0
+            off_pts = [
+                [
+                    round(pt[0] + nx * dist + math.sin(i * 0.8 + w_count) * wob, 1),
+                    round(pt[1] + ny * dist + math.cos(i * 0.8 + w_count) * wob, 1),
+                ]
+                for i, pt in enumerate(pts)
+            ]
+            wash_color = style_preset.adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06)
             add_child(
                 s,
                 {
                     "cmd": "paint.stroke",
                     "params": {
-                        "name": f"{name} (Wash Sweep {w_count})",
+                        "name": f"{name} ({style_preset.name} Wash {w_count})",
                         "points": off_pts,
                         "size": max(8.0, round(size * (0.85 + 0.15 * (w_count % 2)), 1)),
-                        "color": adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06),
+                        "color": wash_color,
                         "hardness": round(hardness * 0.9, 2),
-                        "opacity": round(max(0.4, opacity * 0.88), 2),
+                        "opacity": round(max(0.35, opacity * 0.88), 2),
                     },
                 },
             )
@@ -424,7 +441,7 @@ def densify_artwork_plan(
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
         mid_pt = pts[len(pts) // 2]
-        ang = math.atan2(dy, dx) + math.pi / 4.0
+        ang = math.atan2(dy, dx) + (math.pi / 3.0 if style_preset.id == "abstract" else math.pi / 4.0)
 
         passes_for_this = max(1, (q_shade - sh_count) // max(1, len(shadings)) + 1)
         for pass_i in range(1, passes_for_this + 1):
@@ -439,17 +456,49 @@ def densify_artwork_plan(
             hy0 = round(cy - math.sin(ang) * hlen * 0.5, 1)
             hx1 = round(cx + math.cos(ang) * hlen * 0.5, 1)
             hy1 = round(cy + math.sin(ang) * hlen * 0.5, 1)
+
+            if style_preset.id == "sketchy":
+                hatch_color = style_preset.adjust_color(col, 0.85) or "#566573"
+                hatch_size = max(1.8, min(3.5, round(size * 0.16, 1)))
+                hatch_hardness = 0.9
+                hatch_opacity = 0.65
+                hatch_label = f"{name} (Pencil Hatch {sh_count})"
+            elif style_preset.id == "cartoon":
+                hatch_color = style_preset.adjust_color(col, 0.75)
+                hatch_size = max(4.0, round(size * 0.45, 1))
+                hatch_hardness = 1.0
+                hatch_opacity = 1.0
+                hatch_label = f"{name} (Cel Shadow {sh_count})"
+            elif style_preset.id == "dreamlike":
+                hatch_color = style_preset.adjust_color(col, 0.95)
+                hatch_size = max(6.0, round(size * 0.5, 1))
+                hatch_hardness = 0.45
+                hatch_opacity = 0.7
+                hatch_label = f"{name} (Luminous Shade {sh_count})"
+            elif style_preset.id == "abstract":
+                hatch_color = style_preset.adjust_color(col, 0.8)
+                hatch_size = max(3.0, round(size * 0.3, 1))
+                hatch_hardness = 0.95
+                hatch_opacity = 0.9
+                hatch_label = f"{name} (Vector Plane {sh_count})"
+            else:
+                hatch_color = style_preset.adjust_color(col, 0.88)
+                hatch_size = max(2.0, min(5.0, round(size * 0.22, 1)))
+                hatch_hardness = 0.85
+                hatch_opacity = 0.7
+                hatch_label = f"{name} (Hatch Tone {sh_count})"
+
             add_child(
                 s,
                 {
                     "cmd": "paint.stroke",
                     "params": {
-                        "name": f"{name} (Hatch Tone {sh_count})",
-                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=8),
-                        "size": max(2.0, min(5.0, round(size * 0.22, 1))),
-                        "color": adjust_color(col, 0.88),
-                        "hardness": 0.85,
-                        "opacity": 0.7,
+                        "name": hatch_label,
+                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4),
+                        "size": hatch_size,
+                        "color": hatch_color,
+                        "hardness": hatch_hardness,
+                        "opacity": hatch_opacity,
                     },
                 },
             )
@@ -477,18 +526,51 @@ def densify_artwork_plan(
                 break
             c_count += 1
             dist = 1.6 * (1 if c_count % 2 == 1 else -1)
-            off_pts = [[round(pt[0] + nx * dist, 1), round(pt[1] + ny * dist, 1)] for pt in pts]
+            wob = style_preset.wobble * 1.5
+            off_pts = [
+                [
+                    round(pt[0] + nx * dist + math.sin(i * 1.2 + c_count) * wob, 1),
+                    round(pt[1] + ny * dist + math.cos(i * 1.2 + c_count) * wob, 1),
+                ]
+                for i, pt in enumerate(pts)
+            ]
+
+            if style_preset.id == "cartoon":
+                outline_color = "#111116"
+                outline_size = max(2.5, round(size * 0.85 * style_preset.outline_size_scale, 1))
+                outline_hardness = 1.0
+                outline_opacity = 1.0
+                label = f"{name} (Ink Contour {c_count})"
+            elif style_preset.id == "sketchy":
+                outline_color = style_preset.adjust_color(col, 0.9) or "#2c3e50"
+                outline_size = max(1.5, round(size * 0.65 * style_preset.outline_size_scale, 1))
+                outline_hardness = 0.88
+                outline_opacity = 0.75
+                label = f"{name} (Pencil Guide {c_count})"
+            elif style_preset.id == "dreamlike":
+                outline_color = style_preset.adjust_color(col, 1.05)
+                outline_size = max(1.8, round(size * 0.75 * style_preset.outline_size_scale, 1))
+                outline_hardness = 0.55
+                outline_opacity = 0.75
+                label = f"{name} (Ethereal Edge {c_count})"
+            else:
+                outline_color = col
+                outline_size = max(1.8, round(size * 0.75 * style_preset.outline_size_scale, 1))
+                outline_hardness = style_preset.outline_hardness
+                outline_opacity = 0.85
+                label = f"{name} (Accent Contour {c_count})"
+
             add_child(
                 s,
                 {
                     "cmd": "paint.stroke",
                     "params": {
-                        "name": f"{name} (Accent Contour {c_count})",
+                        "name": label,
                         "points": off_pts,
-                        "size": max(1.8, round(size * 0.75, 1)),
-                        "color": col,
-                        "hardness": 0.95,
-                        "opacity": 0.85,
+                        "size": outline_size,
+                        "color": outline_color,
+                        "hardness": outline_hardness,
+                        "opacity": outline_opacity,
                     },
                 },
             )
@@ -519,20 +601,47 @@ def densify_artwork_plan(
             cx = mid_pt[0] + g_off
             cy = mid_pt[1] + g_off
             gx0 = round(cx - math.cos(ang) * glen * 0.5, 1)
-            gy0 = round(cy - math.sin(ang) * glen * 0.5, 1)
+            hy_dir = math.sin(ang)
+            gy0 = round(cy - hy_dir * glen * 0.5, 1)
             gx1 = round(cx + math.cos(ang) * glen * 0.5, 1)
-            gy1 = round(cy + math.sin(ang) * glen * 0.5, 1)
+            gy1 = round(cy + hy_dir * glen * 0.5, 1)
+
+            if style_preset.id == "dreamlike":
+                hi_color = "#ffffff" if h_count % 2 == 0 else "#fbfcfc"
+                hi_size = max(3.5, round(size * 0.8, 1))
+                hi_hardness = 0.5
+                hi_opacity = 0.85
+                label = f"{name} (Aura Flare {h_count})"
+            elif style_preset.id == "cartoon":
+                hi_color = "#ffffff"
+                hi_size = max(3.0, round(size * 0.75, 1))
+                hi_hardness = 1.0
+                hi_opacity = 1.0
+                label = f"{name} (Cel Gleam {h_count})"
+            elif style_preset.id == "sketchy":
+                hi_color = "#fdfefe"
+                hi_size = max(2.0, round(size * 0.5, 1))
+                hi_hardness = 0.8
+                hi_opacity = 0.7
+                label = f"{name} (Eraser Light {h_count})"
+            else:
+                hi_color = "#ffffff"
+                hi_size = max(2.5, round(size * 0.65, 1))
+                hi_hardness = 1.0
+                hi_opacity = 0.95
+                label = f"{name} (Specular Glint {h_count})"
+
             add_child(
                 s,
                 {
                     "cmd": "paint.stroke",
                     "params": {
-                        "name": f"{name} (Specular Glint {h_count})",
+                        "name": label,
                         "points": stroke_line(gx0, gy0, gx1, gy1, steps=6),
-                        "size": max(2.5, round(size * 0.65, 1)),
-                        "color": "#ffffff",
-                        "hardness": 1.0,
-                        "opacity": 0.95,
+                        "size": hi_size,
+                        "color": hi_color,
+                        "hardness": hi_hardness,
+                        "opacity": hi_opacity,
                     },
                 },
             )
@@ -565,7 +674,7 @@ def densify_artwork_plan(
                         "name": f"{name} (Fine Texture {allocated})",
                         "points": off_pts,
                         "size": max(4.0, round(size * 0.7, 1)),
-                        "color": adjust_color(col, 0.96),
+                        "color": style_preset.adjust_color(col, 0.96),
                         "hardness": 0.75,
                         "opacity": 0.8,
                     },
@@ -581,6 +690,7 @@ def densify_artwork_plan(
 
     plan_copy = dict(plan)
     plan_copy["steps"] = final_steps
+    plan_copy["style"] = style_preset.id
     return plan_copy
 
 
@@ -592,19 +702,30 @@ def compose_with_ollama(
 
     client = ollama.Client(host=config.ollama_host)
     model = config.ollama_model
+    style_preset = get_style(config.style)
     detail = max(1, min(config.detail_level, 25))
     detail_info = get_detail_guidance(detail)
 
-    logger.info("Querying Ollama at %s with model '%s' (detail %d/25)...", config.ollama_host, model, detail)
+    logger.info(
+        "Querying Ollama at %s with model '%s' (style: %s, detail %d/25)...",
+        config.ollama_host,
+        model,
+        style_preset.name,
+        detail,
+    )
+
+    style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
 
     res = client.chat(
         model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": style_system},
             {
                 "role": "user",
                 "content": (
                     f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
+                    f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+                    f"Color Mood: {style_preset.color_mood}\n"
                     f"Requested Detail: {detail_info}\n"
                     "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths them into detailed curves).\n"
                     "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
@@ -630,17 +751,25 @@ def compose_with_ollama(
     normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
 
     base_title = data.get("title") or prompt.title()
-    title = f"{base_title} (Detail {detail}/25)" if f"detail {detail}/25" not in base_title.lower() else base_title
+    title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"
+
+    bg_fallback = (
+        "#fdfefe" if style_preset.id == "sketchy" else
+        "#111822" if style_preset.id == "abstract" else
+        "#16122c" if style_preset.id == "dreamlike" else
+        "#f8f9fa"
+    )
 
     plan = {
         "title": title,
-        "background": normalize_color(data.get("background")) or "#f8f9fa",
+        "background": normalize_color(data.get("background")) or bg_fallback,
         "width": width,
         "height": height,
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": normalized_steps,
     }
-    return densify_artwork_plan(plan, detail_level=detail)
+    return densify_artwork_plan(plan, detail_level=detail, style=config.style)
 
 
 def compose_with_openai(
@@ -653,17 +782,22 @@ def compose_with_openai(
         api_key=config.openai_api_key or "sk-dummy",
         base_url=config.openai_base_url,
     )
+    style_preset = get_style(config.style)
     detail = max(1, min(config.detail_level, 25))
     detail_info = get_detail_guidance(detail)
+
+    style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
 
     response = client.chat.completions.create(
         model=config.openai_model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": style_system},
             {
                 "role": "user",
                 "content": (
                     f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
+                    f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+                    f"Color Mood: {style_preset.color_mood}\n"
                     f"Requested Detail: {detail_info}\n"
                     "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
                 ),
@@ -679,17 +813,25 @@ def compose_with_openai(
     normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
 
     base_title = data.get("title") or prompt.title()
-    title = f"{base_title} (Detail {detail}/25)" if f"detail {detail}/25" not in base_title.lower() else base_title
+    title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"
+
+    bg_fallback = (
+        "#fdfefe" if style_preset.id == "sketchy" else
+        "#111822" if style_preset.id == "abstract" else
+        "#16122c" if style_preset.id == "dreamlike" else
+        "#f8f9fa"
+    )
 
     plan = {
         "title": title,
-        "background": normalize_color(data.get("background")) or "#f8f9fa",
+        "background": normalize_color(data.get("background")) or bg_fallback,
         "width": width,
         "height": height,
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": normalized_steps,
     }
-    return densify_artwork_plan(plan, detail_level=detail)
+    return densify_artwork_plan(plan, detail_level=detail, style=config.style)
 
 
 def plan_artwork(
@@ -697,6 +839,7 @@ def plan_artwork(
 ) -> tuple[dict[str, Any], str]:
     """Plan drawing steps for a prompt. Defaults to Ollama, supports OpenAI, and falls back to procedural."""
     detail = max(1, min(config.detail_level, 25))
+    style_preset = get_style(config.style)
 
     # 1. Try Ollama (Default)
     if config.provider == "ollama" or (not config.openai_api_key and not config.openai_base_url):
@@ -717,7 +860,7 @@ def plan_artwork(
             logger.warning("OpenAI composition failed: %s", e)
 
     # 3. Built-in procedural fallback
-    logger.info("Using built-in procedural composer for '%s' (detail level: %d)", prompt, detail)
-    plan = plan_fallback(prompt, width, height, detail_level=detail)
-    plan = densify_artwork_plan(plan, detail_level=detail)
-    return plan, f"Built-in Painterly Composer (Detail {detail}/25)"
+    logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
+    plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style)
+    plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
+    return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"

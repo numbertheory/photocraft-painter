@@ -13,14 +13,18 @@ from photocraft_painter.strokes import (
     stroke_painterly_fill,
     stroke_sketch_oval,
 )
+from photocraft_painter.styles import get_style
 
 
-def plan_painterly_rubber_duck(width: int = 800, height: int = 800, detail_level: int = 5) -> dict[str, Any]:
+def plan_painterly_rubber_duck(
+    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+) -> dict[str, Any]:
     """Generate drawing steps recreating an artist sketching and painting a rubber duck.
     
     A higher detail_level (1 to 25) scales the number and density of brushstrokes across all layers.
     At detail level 5, ~50-60 brush strokes are generated; at detail level 25, ~250 brush strokes are generated.
     """
+    style_preset = get_style(style)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -794,22 +798,36 @@ def plan_painterly_rubber_duck(width: int = 800, height: int = 800, detail_level
                 },
             })
 
+    bg = "#eef7fa"
+    if style_preset.id == "sketchy":
+        bg = "#fdfefe"
+    elif style_preset.id == "dreamlike":
+        bg = "#16122c"
+    elif style_preset.id == "cartoon":
+        bg = "#ffffff"
+    elif style_preset.id == "abstract":
+        bg = "#111822"
+
     return {
-        "title": f"Painterly Rubber Duck (Detail {detail}/25)",
+        "title": f"Painterly Rubber Duck [{style_preset.name}] (Detail {detail}/25)",
         "width": width,
         "height": height,
-        "background": "#eef7fa",
+        "background": bg,
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": steps,
     }
 
 
-def plan_painterly_sunset(width: int = 800, height: int = 800, detail_level: int = 5) -> dict[str, Any]:
+def plan_painterly_sunset(
+    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+) -> dict[str, Any]:
     """Generate drawing steps recreating an artist painting a mountain sunset.
     
     A higher detail_level (1 to 25) scales the number and density of brushstrokes across all layers.
     At detail level 5, ~50-60 brush strokes are generated; at detail level 25, ~250 brush strokes are generated.
     """
+    style_preset = get_style(style)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -1066,22 +1084,36 @@ def plan_painterly_sunset(width: int = 800, height: int = 800, detail_level: int
             },
         })
 
+    bg = "#110e1b"
+    if style_preset.id == "sketchy":
+        bg = "#fbfaf5"
+    elif style_preset.id == "dreamlike":
+        bg = "#0d0a21"
+    elif style_preset.id == "cartoon":
+        bg = "#f0f4f8"
+    elif style_preset.id == "abstract":
+        bg = "#0f141c"
+
     return {
-        "title": f"Mountain Sunset at Dusk (Detail {detail}/25)",
+        "title": f"Mountain Sunset at Dusk [{style_preset.name}] (Detail {detail}/25)",
         "width": width,
         "height": height,
-        "background": "#110e1b",
+        "background": bg,
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": steps,
     }
 
 
-def plan_painterly_racecar(width: int = 800, height: int = 800, detail_level: int = 5) -> dict[str, Any]:
+def plan_painterly_racecar(
+    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+) -> dict[str, Any]:
     """Generate drawing steps recreating an artist sketching and painting an aerodynamic racecar.
     
     A higher detail_level (1 to 25) scales the number and density of brushstrokes across all layers.
     At detail level 5, ~50-60 brush strokes are generated; at detail level 25, ~250 brush strokes are generated.
     """
+    style_preset = get_style(style)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -1654,22 +1686,36 @@ def plan_painterly_racecar(width: int = 800, height: int = 800, detail_level: in
             },
         })
 
+    bg = "#141419"
+    if style_preset.id == "sketchy":
+        bg = "#fdfefe"
+    elif style_preset.id == "dreamlike":
+        bg = "#140e26"
+    elif style_preset.id == "cartoon":
+        bg = "#ffffff"
+    elif style_preset.id == "abstract":
+        bg = "#161b22"
+
     return {
-        "title": f"Painterly Racecar (Detail {detail}/25)",
+        "title": f"Painterly Racecar [{style_preset.name}] (Detail {detail}/25)",
         "width": width,
         "height": height,
-        "background": "#141419",
+        "background": bg,
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": steps,
     }
 
 
-def plan_dynamic_artwork(prompt: str, width: int = 800, height: int = 800, detail_level: int = 5) -> dict[str, Any]:
+def plan_dynamic_artwork(
+    prompt: str, width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+) -> dict[str, Any]:
     """Generate an authentic custom painterly study dynamically themed around any arbitrary prompt.
     
     A higher detail_level (1 to 25) scales the number and density of brushstrokes across all layers.
     At detail level 5, ~50-60 brush strokes are generated; at detail level 25, ~250 brush strokes are generated.
     """
+    style_preset = get_style(style)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -1687,7 +1733,36 @@ def plan_dynamic_artwork(prompt: str, width: int = 800, height: int = 800, detai
         {"bg": "#191522", "wash": "#9b59b6", "mid": "#8e44ad", "dark": "#512e5f", "accent": "#1abc9c", "ink": "#130f1b"},
         {"bg": "#1d1916", "wash": "#e67e22", "mid": "#d35400", "dark": "#873600", "accent": "#3498db", "ink": "#17120e"},
     ]
-    pal = palettes[h % len(palettes)]
+    pal = dict(palettes[h % len(palettes)])
+    if style_preset.id == "sketchy":
+        pal = {"bg": "#fdfefe", "wash": "#7f8c8d", "mid": "#566573", "dark": "#2c3e50", "accent": "#bdc3c7", "ink": "#1c2833"}
+    elif style_preset.id == "dreamlike":
+        pal = {
+            "bg": "#120d24",
+            "wash": style_preset.adjust_color(pal["wash"], 1.1) or "#a569bd",
+            "mid": style_preset.adjust_color(pal["mid"], 1.0) or "#8e44ad",
+            "dark": style_preset.adjust_color(pal["dark"], 0.9) or "#4a235a",
+            "accent": "#f9e79f",
+            "ink": "#2e1c4a",
+        }
+    elif style_preset.id == "cartoon":
+        pal = {
+            "bg": "#ffffff",
+            "wash": style_preset.adjust_color(pal["wash"], 1.15) or "#e74c3c",
+            "mid": style_preset.adjust_color(pal["mid"], 1.1) or "#c0392b",
+            "dark": style_preset.adjust_color(pal["dark"], 1.0) or "#922b21",
+            "accent": "#f1c40f",
+            "ink": "#000000",
+        }
+    elif style_preset.id == "abstract":
+        pal = {
+            "bg": "#17202a",
+            "wash": style_preset.adjust_color(pal["wash"], 1.2) or "#e67e22",
+            "mid": style_preset.adjust_color(pal["mid"], 1.1) or "#d35400",
+            "dark": style_preset.adjust_color(pal["dark"], 0.8) or "#1b2631",
+            "accent": "#00ffff",
+            "ink": "#fdfefe",
+        }
 
     # 1. Sketch layer
     steps.append({"cmd": "layer.new.layer", "params": {"name": f"1. Sketch: {prompt.title()}"}})
@@ -2022,27 +2097,34 @@ def plan_dynamic_artwork(prompt: str, width: int = 800, height: int = 800, detai
         })
 
     return {
-        "title": f"Painterly Study: {prompt.title()} (Detail {detail}/25)",
+        "title": f"Painterly Study: {prompt.title()} [{style_preset.name}] (Detail {detail}/25)",
         "width": width,
         "height": height,
         "background": pal["bg"],
         "detail_level": detail,
+        "style": style_preset.id,
         "steps": steps,
     }
 
 
-def plan_fallback(prompt: str, width: int = 800, height: int = 800, detail_level: int = 5) -> dict[str, Any]:
-    """Select the best matching painterly plan based on prompt keywords and detail level (1 to 25)."""
+def plan_fallback(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+) -> dict[str, Any]:
+    """Select the best matching painterly plan based on prompt keywords, detail level (1 to 25), and style."""
     lowered = prompt.lower()
 
     if any(k in lowered for k in ["car", "racecar", "auto", "vehicle", "speed", "formula", "truck"]):
-        return plan_painterly_racecar(width, height, detail_level)
+        return plan_painterly_racecar(width, height, detail_level, style=style)
 
     if any(k in lowered for k in ["sunset", "mountain", "dusk", "horizon", "lake", "ocean", "landscape"]):
-        return plan_painterly_sunset(width, height, detail_level)
+        return plan_painterly_sunset(width, height, detail_level, style=style)
 
     if any(k in lowered for k in ["duck", "rubber duck", "bath", "quack"]):
-        return plan_painterly_rubber_duck(width, height, detail_level)
+        return plan_painterly_rubber_duck(width, height, detail_level, style=style)
 
     # For any other prompt, create an authentic dynamic composition matching the user's specific prompt
-    return plan_dynamic_artwork(prompt, width, height, detail_level)
+    return plan_dynamic_artwork(prompt, width, height, detail_level, style=style)
