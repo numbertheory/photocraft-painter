@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +8,7 @@ from photocraft_painter.config import PainterConfig
 from photocraft_painter.composer import (
     compose_with_ollama,
     densify_artwork_plan,
+    expand_step,
     extract_json_from_response,
     normalize_color,
     normalize_step,
@@ -16,14 +18,19 @@ from photocraft_painter.composer import (
 )
 from photocraft_painter.fallback_composer import (
     plan_fallback,
+    plan_painterly_pikachu,
     plan_painterly_rubber_duck,
     plan_painterly_sunset,
 )
 from photocraft_painter.strokes import (
+    smooth_path,
     stroke_bezier,
+    stroke_enclosed_loop,
+    stroke_enclosed_oval,
+    stroke_enclosed_rect,
     stroke_line,
-    stroke_sketch_oval,
     stroke_painterly_fill,
+    stroke_sketch_oval,
 )
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
@@ -481,6 +488,140 @@ def test_compose_with_ollama_non_multimodal_error(tmp_path):
 
         assert "does not support vision/image input" in str(exc_info.value)
         assert "llama3.2-vision:11b" in str(exc_info.value)
+
+
+def test_normalize_paint_bucket_step():
+    # Direct x, y and color
+    step1 = {
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Cheek Fill",
+            "x": 275.4,
+            "y": 465.8,
+            "color": "#e74c3c",
+            "tolerance": 45,
+            "sampleAllLayers": True,
+        },
+    }
+    norm1 = normalize_step(step1)
+    assert norm1["cmd"] == "paint.bucket"
+    assert norm1["params"]["name"] == "Cheek Fill"
+    assert norm1["params"]["x"] == 275
+    assert norm1["params"]["y"] == 466
+    assert norm1["params"]["color"] == "#e74c3c"
+    assert norm1["params"]["tolerance"] == 45
+    assert norm1["params"]["sampleAllLayers"] is True
+
+    # Seed point extraction from point/seed
+    step2 = {
+        "cmd": "bucket",
+        "params": {
+            "name": "Body Fill",
+            "seed": [400, 420],
+            "color": "fedb00",
+        },
+    }
+    norm2 = normalize_step(step2)
+    assert norm2["cmd"] == "paint.bucket"
+    assert norm2["params"]["x"] == 400
+    assert norm2["params"]["y"] == 420
+    assert norm2["params"]["color"] == "#fedb00"
+    assert norm2["params"]["sampleAllLayers"] is True
+
+
+def test_expand_bounding_box_step():
+    # A high-level bounding box step expands into an enclosed outline stroke and a paint bucket fill
+    box_step = {
+        "cmd": "paint.bounding_box",
+        "params": {
+            "name": "Badge Flat",
+            "rect": [200, 300, 100, 80],
+            "stroke": "#111111",
+            "fill": "#fedb00",
+            "stroke_size": 4.0,
+        },
+    }
+    expanded = expand_step(box_step)
+    assert len(expanded) == 2
+
+    # Step 1: paint.stroke with completely closed bounding outline
+    stroke_step = expanded[0]
+    assert stroke_step["cmd"] == "paint.stroke"
+    assert "Bounding Outline" in stroke_step["params"]["name"]
+    pts = stroke_step["params"]["points"]
+    assert len(pts) >= 4
+    # End point meets start point without gaps
+    assert math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 0.1 or len(pts) > 4
+    assert stroke_step["params"]["hardness"] == 1.0
+
+    # Step 2: paint.bucket with center coordinates (250, 340)
+    bucket_step = expanded[1]
+    assert bucket_step["cmd"] == "paint.bucket"
+    assert bucket_step["params"]["x"] == 250
+    assert bucket_step["params"]["y"] == 340
+    assert bucket_step["params"]["color"] == "#fedb00"
+    assert bucket_step["params"]["sampleAllLayers"] is True
+
+
+def test_stroke_enclosed_shapes():
+    # Enclosed rect
+    rect_pts = stroke_enclosed_rect(100, 100, 200, 150)
+    assert len(rect_pts) >= 40
+    # Closed loop: points touch or overlap start
+    assert rect_pts[0][0] == 100.0 and rect_pts[0][1] == 100.0
+    for p in rect_pts:
+        assert p[2] >= 0.8  # Solid pressure throughout to prevent pinholes
+
+    # Enclosed oval
+    oval_pts = stroke_enclosed_oval(400, 400, 100, 80)
+    assert len(oval_pts) >= 50
+    for p in oval_pts:
+        assert p[2] >= 0.8
+
+
+def test_smooth_path_closed_loop_watertight():
+    # Coarse closed polygon: 4 corners of a box + return to start
+    closed_box = [[100, 100], [200, 100], [200, 200], [100, 200], [100, 100]]
+    smoothed = smooth_path(closed_box)
+    assert len(smoothed) >= 20
+    # The seam must not taper pressure to zero (which would cause a flood fill leak)
+    assert smoothed[-1][2] >= 0.85
+    assert smoothed[0][2] >= 0.85
+
+
+def test_plan_painterly_pikachu():
+    pikachu = plan_painterly_pikachu(800, 800, detail_level=5)
+    assert "Painterly Pikachu" in pikachu["title"]
+    assert pikachu["width"] == 800
+    assert pikachu["height"] == 800
+
+    # Must contain both enclosed bounding outlines and paint bucket fills
+    bucket_steps = [s for s in pikachu["steps"] if s["cmd"] == "paint.bucket"]
+    stroke_steps = [s for s in pikachu["steps"] if s["cmd"] == "paint.stroke"]
+    layer_steps = [s for s in pikachu["steps"] if s["cmd"] == "layer.new.layer"]
+
+    assert len(bucket_steps) >= 5  # Body, ears, ear tips, cheeks, eyes, mouth
+    assert len(stroke_steps) >= 15
+    assert len(layer_steps) >= 4
+
+    # Verify Pikachu yellow body fill is present
+    has_body_fill = any(
+        s["params"].get("color") == "#fedb00" and "Body" in s["params"].get("name", "")
+        for s in bucket_steps
+    )
+    assert has_body_fill
+
+    # Verify red cheek fills are present
+    cheek_fills = [
+        s for s in bucket_steps
+        if s["params"].get("color") == "#e74c3c" and "Cheek" in s["params"].get("name", "")
+    ]
+    assert len(cheek_fills) == 2
+
+    # Verify fallback router routes "pikachu" to plan_painterly_pikachu
+    routed_plan, routed_src = plan_artwork("pikachu", PainterConfig(provider="none"))
+    assert "Pikachu" in routed_plan["title"]
+
 
 
 

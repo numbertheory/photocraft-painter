@@ -10,7 +10,13 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from photocraft_painter.fallback_composer import plan_fallback
-from photocraft_painter.strokes import smooth_path, stroke_line
+from photocraft_painter.strokes import (
+    smooth_path,
+    stroke_enclosed_loop,
+    stroke_enclosed_oval,
+    stroke_enclosed_rect,
+    stroke_line,
+)
 from photocraft_painter.styles import STYLE_PRESETS, get_style
 
 if TYPE_CHECKING:
@@ -24,7 +30,7 @@ Keep your internal reasoning very short and concise (under 150 words). Immediate
 
 An artist typically works in layers:
 1. "Pencil Sketch": loose, expressive sketch lines outlining the subject's anatomy and gestures.
-2. "Color Wash": painterly brush strokes blocking in color, textures, and backgrounds.
+2. "Base Fills & Flats": clean solid color blocking using completely enclosed bounding outlines and the Paint Bucket tool.
 3. "Shading & Form": deeper tonal brush strokes modeling 3D volume and shadows.
 4. "Ink Contours": crisp, confident pen/brush contour lines defining edges and fine details.
 5. "Highlights": sparkling accents, glints, and white dabs.
@@ -43,7 +49,7 @@ Output strictly valid JSON matching this schema:
     {
       "cmd": "paint.stroke",
       "params": {
-        "name": "Sketch: Gesture Curve",
+        "name": "Sketch: Head Gesture",
         "points": [[200, 300], [250, 260], [350, 260], [400, 300]],
         "size": 3.0,
         "color": "#7f8c8d",
@@ -51,12 +57,29 @@ Output strictly valid JSON matching this schema:
       }
     },
     {
-      "cmd": "shape.create",
+      "cmd": "layer.new.layer",
       "params": {
-        "kind": "ellipse",
-        "rect": [200, 200, 400, 300],
-        "fill": "#ffd700",
-        "name": "Color Backdrop"
+        "name": "2. Base Color Flats"
+      }
+    },
+    {
+      "cmd": "paint.stroke",
+      "params": {
+        "name": "Head Bounding Outline (Enclosed)",
+        "points": [[200, 200], [400, 200], [400, 400], [200, 400], [200, 200]],
+        "size": 5.0,
+        "color": "#111111",
+        "hardness": 0.95
+      }
+    },
+    {
+      "cmd": "paint.bucket",
+      "params": {
+        "name": "Head Yellow Base Fill",
+        "x": 300,
+        "y": 300,
+        "color": "#ffd700",
+        "sampleAllLayers": true
       }
     }
   ]
@@ -69,12 +92,27 @@ COMMAND OPTIONS:
    - "color": hex string (e.g. "#1c2833", "#ffd700", "#ffffff")
    - "hardness": 0.0 to 1.0 (0.5 for soft paint/watercolor, 0.9 for sharp pencil/ink lines)
    - "name": descriptive name for the stroke
-2. "layer.new.layer": Creates a new raster layer to organize the artwork.
-   - "name": descriptive layer name (e.g. "Pencil Sketch", "Paint Fill", "Ink Outlines")
-3. "shape.create": For backdrop blocks or clean shapes.
+2. "paint.bucket": Paint bucket / flood fill tool for filling enclosed areas cleanly.
+   - "x": integer x coordinate seed point strictly inside the enclosed area
+   - "y": integer y coordinate seed point strictly inside the enclosed area
+   - "color": hex color string (e.g. "#ffd700", "#e74c3c")
+   - "tolerance": integer 0-255 (default 32)
+   - "sampleAllLayers": true (checks boundary lines from all layers)
+   - "name": descriptive name for the fill
+3. "layer.new.layer": Creates a new raster layer to organize the artwork.
+   - "name": descriptive layer name (e.g. "Pencil Sketch", "Color Flats", "Shading", "Ink Outlines")
+4. "shape.create": For backdrop blocks or clean shapes.
    - "kind": "ellipse", "rect", "roundedRect", "polygon", "star"
    - "rect": [x, y, width, height] (3rd and 4th values MUST be WIDTH and HEIGHT, NOT x2/y2!)
    - "fill": hex string or null
+
+IMPORTANT BOUNDING BOX & PAINT BUCKET RULE:
+When coloring in regions (such as a character's body, face, head, ears, clothing, or background objects), NEVER messily scribble back and forth with dozens of thick brush strokes!
+Instead:
+- First, draw a completely enclosed bounding outline with `paint.stroke` (e.g. a closed polygon or contour where the start and end points connect: points[0] == points[-1], size >= 4.0, hardness >= 0.9).
+  WARNING: The bounding contour MUST be completely enclosed without any gaps, pinholes, or openings, otherwise the paint bucket will leak across the entire canvas!
+- Immediately follow with `paint.bucket` using a seed point (x, y) situated well inside the center of that enclosed area, with "sampleAllLayers": true.
+- After filling the clean solid flats, proceed to shading, highlights, and painterly details.
 
 Canvas size is 800x800 pixels. Generate expressive steps according to the requested detail level.
 Output ONLY the JSON object.
@@ -144,6 +182,44 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
             clean_params["opacity"] = max(0.0, min(float(raw_params["opacity"]), 1.0))
 
         return {"cmd": "paint.stroke", "params": clean_params}
+
+    # 3. Paint bucket / flood fill command
+    if cmd in ("paint.bucket", "bucket", "fill.bucket", "flood.fill", "paint_bucket"):
+        clean_params = {}
+        clean_params["name"] = str(raw_params.get("name") or "Paint Bucket Fill")
+
+        px = raw_params.get("x")
+        py = raw_params.get("y")
+        if px is None or py is None:
+            pt = raw_params.get("point") or raw_params.get("seed")
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                px = pt[0]
+                py = pt[1]
+            else:
+                rect = raw_params.get("rect")
+                if isinstance(rect, (list, tuple)) and len(rect) >= 4:
+                    px = float(rect[0]) + float(rect[2]) * 0.5
+                    py = float(rect[1]) + float(rect[3]) * 0.5
+                else:
+                    px = canvas_w // 2
+                    py = canvas_h // 2
+
+        clean_params["x"] = int(round(max(0.0, min(float(px), float(canvas_w - 1)))))
+        clean_params["y"] = int(round(max(0.0, min(float(py), float(canvas_h - 1)))))
+
+        color = normalize_color(raw_params.get("color") or raw_params.get("fill") or "#000000")
+        clean_params["color"] = color or "#000000"
+
+        tol = int(raw_params.get("tolerance") or 32)
+        clean_params["tolerance"] = max(0, min(tol, 255))
+        clean_params["sampleAllLayers"] = bool(raw_params.get("sampleAllLayers", True))
+        clean_params["contiguous"] = bool(raw_params.get("contiguous", True))
+        clean_params["antiAlias"] = bool(raw_params.get("antiAlias", True))
+
+        opacity = float(raw_params.get("opacity") or 100.0)
+        clean_params["opacity"] = max(1.0, min(opacity, 100.0))
+
+        return {"cmd": "paint.bucket", "params": clean_params}
 
     # 3. Shape creation command (default)
     kind = str(raw_params.get("kind", "rect")).lower()
@@ -216,6 +292,47 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
             clean_shape["weight"] = float(raw_params.get("weight") or 2.0)
 
     return {"cmd": "shape.create", "params": clean_shape}
+
+
+def expand_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 800) -> list[dict[str, Any]]:
+    """Expand composite steps such as bounding boxes into an enclosed outline stroke and paint bucket fill."""
+    cmd = str(step.get("cmd") or step.get("id") or "").strip()
+    raw_params = dict(step.get("params") or {})
+
+    if cmd in ("paint.bounding_box", "bounding_box", "box.fill", "enclosed_box"):
+        rect = raw_params.get("rect") or [100.0, 100.0, 200.0, 200.0]
+        rx, ry = float(rect[0]), float(rect[1])
+        rw, rh = float(rect[2]), float(rect[3])
+        name = str(raw_params.get("name") or "Bounding Box")
+        stroke_color = normalize_color(raw_params.get("stroke_color") or raw_params.get("stroke") or "#111111") or "#111111"
+        fill_color = normalize_color(raw_params.get("fill_color") or raw_params.get("fill") or raw_params.get("color") or "#ffd700") or "#ffd700"
+        stroke_size = float(raw_params.get("stroke_size") or 4.5)
+
+        outline_pts = stroke_enclosed_rect(rx, ry, rw, rh)
+        outline_step = {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{name} (Bounding Outline)",
+                "points": outline_pts,
+                "size": stroke_size,
+                "color": stroke_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        }
+        bucket_step = {
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{name} (Paint Bucket Fill)",
+                "x": int(round(rx + rw * 0.5)),
+                "y": int(round(ry + rh * 0.5)),
+                "color": fill_color,
+                "sampleAllLayers": True,
+            },
+        }
+        return [outline_step, bucket_step]
+
+    return [normalize_step(step, canvas_w, canvas_h)]
 
 
 def extract_json_from_response(text: str) -> dict[str, Any]:
@@ -816,7 +933,10 @@ def compose_with_ollama(
     if not isinstance(raw_steps, list):
         raise ValueError("Response did not contain a valid 'steps' array")
 
-    normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
 
     base_title = data.get("title") or prompt.title()
     title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"
@@ -907,7 +1027,10 @@ def compose_with_openai(
     content = response.choices[0].message.content or "{}"
     data = extract_json_from_response(content)
     raw_steps = data.get("steps") or []
-    normalized_steps = [normalize_step(st, width, height) for st in raw_steps if isinstance(st, dict)]
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
 
     base_title = data.get("title") or prompt.title()
     title = f"{base_title} [{style_preset.name}] (Detail {detail}/25)"

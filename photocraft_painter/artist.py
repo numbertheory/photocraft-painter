@@ -54,7 +54,7 @@ async def execute_live_drawing(
             active_layer_is_raster = True
         elif cmd == "shape.create":
             active_layer_is_raster = False
-        elif cmd == "paint.stroke":
+        elif cmd in ("paint.stroke", "paint.bucket"):
             if not active_layer_is_raster:
                 try:
                     await client.new_layer("Paint Layer")

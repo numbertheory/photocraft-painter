@@ -228,19 +228,34 @@ def stroke_hatching(
 
 
 def smooth_path(coarse_points: Sequence[Sequence[float]], samples_per_segment: int = 8) -> list[list[float]]:
-    """Take coarse waypoints and generate a silky smooth Catmull-Rom stroke with pressure."""
+    """Take coarse waypoints and generate a silky smooth Catmull-Rom stroke with pressure.
+    
+    If the waypoints form a closed loop (start and end points meet), the curve is wrapped cyclically
+    with solid boundary pressure and closure overlap to guarantee a watertight barrier for paint bucket fills.
+    """
     if len(coarse_points) < 2:
         return [[float(p[0]), float(p[1]), 0.8] for p in coarse_points]
 
     pts = [[float(p[0]), float(p[1])] for p in coarse_points]
+    is_closed = (
+        len(pts) >= 3
+        and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 3.0
+    )
+
     total_segments = len(pts) - 1
     result: list[list[float]] = []
 
     for seg in range(total_segments):
-        p0 = pts[max(0, seg - 1)]
-        p1 = pts[seg]
-        p2 = pts[seg + 1]
-        p3 = pts[min(total_segments, seg + 2)]
+        if is_closed:
+            p0 = pts[-2] if seg == 0 else pts[seg - 1]
+            p1 = pts[seg]
+            p2 = pts[seg + 1]
+            p3 = pts[1] if seg + 1 == total_segments else (pts[seg + 2] if seg + 2 < len(pts) else pts[0])
+        else:
+            p0 = pts[max(0, seg - 1)]
+            p1 = pts[seg]
+            p2 = pts[seg + 1]
+            p3 = pts[min(total_segments, seg + 2)]
 
         for i in range(samples_per_segment):
             t = i / samples_per_segment
@@ -261,9 +276,98 @@ def smooth_path(coarse_points: Sequence[Sequence[float]], samples_per_segment: i
                 + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
                 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
             )
-            pressure = pressure_profile_swell(global_t)
+            pressure = 0.9 if is_closed else pressure_profile_swell(global_t)
             result.append([round(x, 1), round(y, 1), pressure])
 
     last_p = pts[-1]
-    result.append([round(last_p[0], 1), round(last_p[1], 1), 0.3])
+    if is_closed:
+        # Guarantee exact seal by touching start point and overlapping 2 extra points
+        result.append([round(pts[0][0], 1), round(pts[0][1], 1), 0.95])
+        if len(result) > 4:
+            result.append([result[1][0], result[1][1], 0.95])
+            result.append([result[2][0], result[2][1], 0.95])
+    else:
+        result.append([round(last_p[0], 1), round(last_p[1], 1), 0.3])
     return result
+
+
+def stroke_enclosed_loop(
+    waypoints: Sequence[Sequence[float]],
+    steps_per_segment: int = 15,
+) -> list[list[float]]:
+    """Generate a watertight closed bounding contour where points[0] seamlessly closes into points[-1].
+    
+    Guarantees that boundaries are completely enclosed with dense sampling and overlap
+    so flood fill (paint.bucket) will not leak.
+    """
+    if len(waypoints) < 3:
+        return []
+
+    pts = [[float(p[0]), float(p[1])] for p in waypoints]
+    # Ensure closed
+    if math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) > 0.001:
+        pts.append([pts[0][0], pts[0][1]])
+
+    result: list[list[float]] = []
+    n = len(pts) - 1
+    for seg in range(n):
+        p1 = pts[seg]
+        p2 = pts[seg + 1]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        dist = math.hypot(dx, dy)
+        actual_steps = max(steps_per_segment, int(dist / 1.5))
+        for step in range(actual_steps):
+            t = step / actual_steps
+            px = p1[0] + dx * t
+            py = p1[1] + dy * t
+            result.append([round(px, 1), round(py, 1), 1.0])
+
+    # Overlap past the start point by 3 samples to seal any sub-pixel raster gaps
+    start_x, start_y = pts[0][0], pts[0][1]
+    result.append([round(start_x, 1), round(start_y, 1), 1.0])
+    if len(result) > 4:
+        result.append([result[1][0], result[1][1], 1.0])
+        result.append([result[2][0], result[2][1], 1.0])
+
+    return result
+
+
+def stroke_enclosed_rect(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    steps_per_side: int = 15,
+) -> list[list[float]]:
+    """Generate a strictly watertight closed rectangular bounding box."""
+    c0 = (x, y)
+    c1 = (x + w, y)
+    c2 = (x + w, y + h)
+    c3 = (x, y + h)
+    return stroke_enclosed_loop([c0, c1, c2, c3], steps_per_segment=steps_per_side)
+
+
+def stroke_enclosed_oval(
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    tilt_deg: float = 0.0,
+    steps: int = 72,
+) -> list[list[float]]:
+    """Generate a watertight closed elliptical boundary."""
+    pts: list[tuple[float, float]] = []
+    rad_tilt = math.radians(tilt_deg)
+    cos_t = math.cos(rad_tilt)
+    sin_t = math.sin(rad_tilt)
+
+    for i in range(steps):
+        angle = (i / steps) * 2 * math.pi
+        ox = rx * math.cos(angle)
+        oy = ry * math.sin(angle)
+        px = cx + (ox * cos_t - oy * sin_t)
+        py = cy + (ox * sin_t + oy * cos_t)
+        pts.append((px, py))
+
+    return stroke_enclosed_loop(pts, steps_per_segment=2)

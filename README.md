@@ -106,6 +106,15 @@ If you provide an image reference to a text-only model (like `ornith-1.5:35b` or
 
 ---
 
+## Clean Color Flats: Bounding Outlines & Paint Bucket (`paint.bucket`)
+
+Instead of messily coloring in subjects with dozens of overlapping horizontal brush stripes, PhotoCraft Painter implements the classic digital illustration workflow:
+1. **Completely Enclosed Bounding Outlines:** A clean bounding box, oval, or contour loop (`paint.stroke`) is drawn along the boundary where `points[0] == points[-1]`. The engine ensures solid boundary pressure and dense sampling so there are **zero pinholes or raster gaps**.
+2. **Paint Bucket Flood Fill (`paint.bucket`):** The interior seed coordinate `(x, y)` inside that enclosed boundary is filled with solid color (`"sampleAllLayers": true`), creating clean, crisp flat fills before shading and highlights are applied.
+3. **Watertight Splines:** The stroke engine smoothly interpolates waypoints with Catmull-Rom splines while keeping seams sealed to prevent paint leaks.
+
+---
+
 ## AI Model Configuration
 
 **Ollama is the default AI composer**, pre-configured for `ornith-1.5:35b`:

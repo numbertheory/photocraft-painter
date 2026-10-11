@@ -8,6 +8,9 @@ from typing import Any
 from photocraft_painter.strokes import (
     stroke_arc,
     stroke_bezier,
+    stroke_enclosed_loop,
+    stroke_enclosed_oval,
+    stroke_enclosed_rect,
     stroke_hatching,
     stroke_line,
     stroke_painterly_fill,
@@ -1707,6 +1710,665 @@ def plan_painterly_racecar(
     }
 
 
+def plan_painterly_pikachu(
+    width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
+) -> dict[str, Any]:
+    """Generate drawing steps recreating an authentic artist illustrating Pikachu.
+    
+    Uses completely enclosed bounding outlines and the Paint Bucket tool for clean, solid color blocking
+    (body, ears, ear-tips, cheeks, eyes, mouth), followed by soft form shading, highlights, and crisp inking.
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+
+    yellow_body = "#fedb00"
+    amber_shadow = "#d4ac0d" if style_preset.id != "sketchy" else "#566573"
+    ear_tip_black = "#181818"
+    cheek_red = "#e74c3c" if style_preset.id != "sketchy" else "#7f8c8d"
+    cheek_rim = "#c0392b" if style_preset.id != "sketchy" else "#2c3e50"
+    mouth_dark = "#922b21" if style_preset.id != "sketchy" else "#2c3e50"
+    tongue_pink = "#f1948a" if style_preset.id != "sketchy" else "#bdc3c7"
+    ink_color = "#151515" if style_preset.id != "sketchy" else "#1c2833"
+    bg_color = (
+        "#fdfefe" if style_preset.id == "sketchy" else
+        "#111822" if style_preset.id == "abstract" else
+        "#16122c" if style_preset.id == "dreamlike" else
+        "#f9fafb"
+    )
+
+    # 1. Pencil Sketch
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Pencil Sketch: Pikachu"}})
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Head Gesture Oval",
+            "points": stroke_sketch_oval(s(400), s(380), s(150), s(135), passes=1.05),
+            "size": 3.0,
+            "color": "#95a5a6",
+            "hardness": 0.8,
+            "opacity": 0.65,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Torso Gesture Oval",
+            "points": stroke_sketch_oval(s(400), s(520), s(165), s(140), passes=1.05),
+            "size": 3.0,
+            "color": "#95a5a6",
+            "hardness": 0.8,
+            "opacity": 0.65,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Left Ear Vector Axis",
+            "points": stroke_line(s(310), s(290), s(140), s(90)),
+            "size": 2.5,
+            "color": "#bdc3c7",
+            "hardness": 0.75,
+            "opacity": 0.6,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Right Ear Vector Axis",
+            "points": stroke_line(s(490), s(290), s(660), s(90)),
+            "size": 2.5,
+            "color": "#bdc3c7",
+            "hardness": 0.75,
+            "opacity": 0.6,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Eye Line Axis",
+            "points": stroke_line(s(280), s(380), s(520), s(380)),
+            "size": 2.0,
+            "color": "#bdc3c7",
+            "hardness": 0.7,
+            "opacity": 0.5,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Sketch: Center Facial Symmetry Axis",
+            "points": stroke_line(s(400), s(250), s(400), s(580)),
+            "size": 2.0,
+            "color": "#bdc3c7",
+            "hardness": 0.7,
+            "opacity": 0.5,
+        },
+    })
+
+    # 2. Base Flats: Enclosed Bounding Outlines & Paint Bucket Fills
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Base Flats: Paint Bucket"}})
+
+    # Left Ear
+    left_ear_pts = [
+        (s(270), s(290)),
+        (s(220), s(210)),
+        (s(170), s(140)),
+        (s(135), s(90)),
+        (s(165), s(85)),
+        (s(225), s(145)),
+        (s(275), s(215)),
+        (s(315), s(275)),
+        (s(270), s(290)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Left Ear (Enclosed)",
+            "points": stroke_enclosed_loop(left_ear_pts),
+            "size": 4.5,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Left Ear Yellow Base Fill",
+            "x": int(s(220)),
+            "y": int(s(180)),
+            "color": yellow_body,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Left Ear Black Tip
+    left_tip_pts = [
+        (s(180), s(140)),
+        (s(135), s(90)),
+        (s(165), s(85)),
+        (s(215), s(135)),
+        (s(180), s(140)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Left Ear Black Tip (Enclosed)",
+            "points": stroke_enclosed_loop(left_tip_pts),
+            "size": 4.5,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Left Ear Tip Black Fill",
+            "x": int(s(160)),
+            "y": int(s(105)),
+            "color": ear_tip_black,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Right Ear
+    right_ear_pts = [
+        (s(485), s(275)),
+        (s(525), s(215)),
+        (s(575), s(145)),
+        (s(635), s(85)),
+        (s(665), s(90)),
+        (s(630), s(140)),
+        (s(580), s(210)),
+        (s(530), s(290)),
+        (s(485), s(275)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Right Ear (Enclosed)",
+            "points": stroke_enclosed_loop(right_ear_pts),
+            "size": 4.5,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Right Ear Yellow Base Fill",
+            "x": int(s(580)),
+            "y": int(s(180)),
+            "color": yellow_body,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Right Ear Black Tip
+    right_tip_pts = [
+        (s(585), s(135)),
+        (s(635), s(85)),
+        (s(665), s(90)),
+        (s(620), s(140)),
+        (s(585), s(135)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Right Ear Black Tip (Enclosed)",
+            "points": stroke_enclosed_loop(right_tip_pts),
+            "size": 4.5,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Right Ear Tip Black Fill",
+            "x": int(s(640)),
+            "y": int(s(105)),
+            "color": ear_tip_black,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Body & Head Silhouette
+    body_pts = [
+        (s(315), s(285)),
+        (s(360), s(265)),
+        (s(400), s(260)),
+        (s(440), s(265)),
+        (s(485), s(285)),
+        (s(535), s(335)),
+        (s(565), s(395)),
+        (s(575), s(455)),
+        (s(565), s(525)),
+        (s(535), s(585)),
+        (s(475), s(630)),
+        (s(400), s(640)),
+        (s(325), s(630)),
+        (s(265), s(585)),
+        (s(235), s(525)),
+        (s(225), s(455)),
+        (s(235), s(395)),
+        (s(265), s(335)),
+        (s(315), s(285)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Pikachu Silhouette (Enclosed)",
+            "points": stroke_enclosed_loop(body_pts),
+            "size": 5.0,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Pikachu Body Yellow Fill",
+            "x": int(s(400)),
+            "y": int(s(420)),
+            "color": yellow_body,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Red Cheeks
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Left Cheek Circle (Enclosed)",
+            "points": stroke_enclosed_oval(s(275), s(465), s(36), s(34)),
+            "size": 4.0,
+            "color": cheek_rim,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Left Cheek Red Fill",
+            "x": int(s(275)),
+            "y": int(s(465)),
+            "color": cheek_red,
+            "sampleAllLayers": True,
+        },
+    })
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Right Cheek Circle (Enclosed)",
+            "points": stroke_enclosed_oval(s(525), s(465), s(36), s(34)),
+            "size": 4.0,
+            "color": cheek_rim,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Right Cheek Red Fill",
+            "x": int(s(525)),
+            "y": int(s(465)),
+            "color": cheek_red,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Eyes
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Left Eye (Enclosed)",
+            "points": stroke_enclosed_oval(s(335), s(375), s(24), s(28)),
+            "size": 3.8,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Left Eye Black Fill",
+            "x": int(s(335)),
+            "y": int(s(375)),
+            "color": ear_tip_black,
+            "sampleAllLayers": True,
+        },
+    })
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Right Eye (Enclosed)",
+            "points": stroke_enclosed_oval(s(465), s(375), s(24), s(28)),
+            "size": 3.8,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Right Eye Black Fill",
+            "x": int(s(465)),
+            "y": int(s(375)),
+            "color": ear_tip_black,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Mouth
+    mouth_pts = [
+        (s(365), s(450)),
+        (s(385), s(458)),
+        (s(400), s(455)),
+        (s(415), s(458)),
+        (s(435), s(450)),
+        (s(425), s(495)),
+        (s(400), s(515)),
+        (s(375), s(495)),
+        (s(365), s(450)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Mouth (Enclosed)",
+            "points": stroke_enclosed_loop(mouth_pts),
+            "size": 3.6,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Mouth Interior Deep Red Fill",
+            "x": int(s(400)),
+            "y": int(s(480)),
+            "color": mouth_dark,
+            "sampleAllLayers": True,
+        },
+    })
+
+    tongue_pts = [
+        (s(380), s(485)),
+        (s(400), s(478)),
+        (s(420), s(485)),
+        (s(415), s(505)),
+        (s(400), s(512)),
+        (s(385), s(505)),
+        (s(380), s(485)),
+    ]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Bounding Outline: Tongue Arc (Enclosed)",
+            "points": stroke_enclosed_loop(tongue_pts),
+            "size": 3.0,
+            "color": mouth_dark,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Tongue Warm Pink Fill",
+            "x": int(s(400)),
+            "y": int(s(495)),
+            "color": tongue_pink,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # 3. Form Shading
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "3. Form Shading & Depth"}})
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Shading: Under-Chin Shadow",
+            "points": stroke_bezier((s(320), s(580)), (s(400), s(610)), (s(480), s(580)), (s(480), s(580))),
+            "size": max(12.0, s(22.0)),
+            "color": amber_shadow,
+            "hardness": 0.65,
+            "opacity": 0.75,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Shading: Left Ear Base Tone",
+            "points": stroke_bezier((s(270), s(290)), (s(300), s(270)), (s(320), s(260)), (s(340), s(270))),
+            "size": max(8.0, s(16.0)),
+            "color": amber_shadow,
+            "hardness": 0.65,
+            "opacity": 0.7,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Shading: Right Ear Base Tone",
+            "points": stroke_bezier((s(460), s(270)), (s(480), s(260)), (s(500), s(270)), (s(530), s(290))),
+            "size": max(8.0, s(16.0)),
+            "color": amber_shadow,
+            "hardness": 0.65,
+            "opacity": 0.7,
+        },
+    })
+
+    if detail >= 3:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Shading: Left Cheek Form Shadow",
+                "points": stroke_arc(s(275), s(475), s(38), s(35), 40, 140),
+                "size": max(6.0, s(12.0)),
+                "color": amber_shadow,
+                "hardness": 0.6,
+                "opacity": 0.65,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Shading: Right Cheek Form Shadow",
+                "points": stroke_arc(s(525), s(475), s(38), s(35), 40, 140),
+                "size": max(6.0, s(12.0)),
+                "color": amber_shadow,
+                "hardness": 0.6,
+                "opacity": 0.65,
+            },
+        })
+
+    if detail >= 6:
+        extra_shading = min(15, detail - 5)
+        for idx in range(extra_shading):
+            t_shade = (idx + 1) / (extra_shading + 1)
+            sy = s(530 + t_shade * 70)
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Shading: Lower Torso Depth {idx+1}",
+                    "points": stroke_line(s(360 - idx * 5), sy, s(440 + idx * 5), sy),
+                    "size": max(6.0, s(14.0 - idx * 0.5)),
+                    "color": amber_shadow,
+                    "hardness": 0.6,
+                    "opacity": 0.6,
+                },
+            })
+
+    # 4. Highlights & Catchlights
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "4. Highlights & Catchlights"}})
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Left Eye Primary Catchlight",
+            "points": stroke_sketch_oval(s(327), s(368), s(8), s(10), passes=1.0),
+            "size": 3.0,
+            "color": "#ffffff",
+            "hardness": 0.95,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Left Eye Catchlight White Fill",
+            "x": int(s(327)),
+            "y": int(s(368)),
+            "color": "#ffffff",
+            "sampleAllLayers": True,
+        },
+    })
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Right Eye Primary Catchlight",
+            "points": stroke_sketch_oval(s(457), s(368), s(8), s(10), passes=1.0),
+            "size": 3.0,
+            "color": "#ffffff",
+            "hardness": 0.95,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Paint Bucket: Right Eye Catchlight White Fill",
+            "x": int(s(457)),
+            "y": int(s(368)),
+            "color": "#ffffff",
+            "sampleAllLayers": True,
+        },
+    })
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Left Eye Secondary Pupil Glint",
+            "points": [[s(342), s(384), 0.9], [s(344), s(386), 0.9]],
+            "size": 3.2,
+            "color": "#ffffff",
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Highlight: Right Eye Secondary Pupil Glint",
+            "points": [[s(472), s(384), 0.9], [s(474), s(386), 0.9]],
+            "size": 3.2,
+            "color": "#ffffff",
+            "hardness": 0.95,
+        },
+    })
+
+    if detail >= 2:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Highlight: Left Cheek Specular Arc",
+                "points": stroke_arc(s(275), s(455), s(22), s(18), 120, 220),
+                "size": 2.8,
+                "color": "#ffb3ba",
+                "hardness": 0.85,
+                "opacity": 0.85,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Highlight: Right Cheek Specular Arc",
+                "points": stroke_arc(s(525), s(455), s(22), s(18), 120, 220),
+                "size": 2.8,
+                "color": "#ffb3ba",
+                "hardness": 0.85,
+                "opacity": 0.85,
+            },
+        })
+
+    # 5. Crisp Ink Contours
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "5. Crisp Ink Contours & Expressions"}})
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Ink: Pikachu Nose Dot",
+            "points": [[s(397), s(415), 1.0], [s(403), s(415), 1.0], [s(400), s(418), 1.0]],
+            "size": 4.0,
+            "color": ink_color,
+            "hardness": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Ink: Left Upper Lip Arc",
+            "points": stroke_bezier((s(365), s(450)), (s(380), s(460)), (s(395), s(460)), (s(400), s(453))),
+            "size": 3.4,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Ink: Right Upper Lip Arc",
+            "points": stroke_bezier((s(400), s(453)), (s(405), s(460)), (s(420), s(460)), (s(435), s(450))),
+            "size": 3.4,
+            "color": ink_color,
+            "hardness": 0.95,
+        },
+    })
+
+    if detail >= 4:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Ink: Left Ear Silhouette Definition",
+                "points": stroke_bezier((s(270), s(290)), (s(220), s(210)), (s(170), s(140)), (s(135), s(90))),
+                "size": 3.6,
+                "color": ink_color,
+                "hardness": 0.95,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Ink: Right Ear Silhouette Definition",
+                "points": stroke_bezier((s(530), s(290)), (s(580), s(210)), (s(630), s(140)), (s(665), s(90))),
+                "size": 3.6,
+                "color": ink_color,
+                "hardness": 0.95,
+            },
+        })
+
+    title = f"Painterly Pikachu [{style_preset.name}] (Detail {detail}/25)"
+    return {
+        "title": title,
+        "background": bg_color,
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "steps": steps,
+    }
+
+
 def plan_dynamic_artwork(
     prompt: str, width: int = 800, height: int = 800, detail_level: int = 5, style: str = "realistic"
 ) -> dict[str, Any]:
@@ -1906,25 +2568,75 @@ def plan_dynamic_artwork(
             },
         })
 
-    # 2. Painterly Wash
-    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Painterly Color Wash"}})
-    if detail <= 5:
-        wash = int(round(5 + (detail - 1) * 3.5))
-    else:
-        wash = int(round(19 + (detail - 5) * 3.6))
-    for i in range(wash):
-        t = i / max(1, wash - 1)
-        y = s(280 + t * 240)
-        w = s(140 + (1.0 - abs(t - 0.5) * 2) * 140)
+    # 2. Base Flats: Enclosed Bounding Outlines & Paint Bucket Fills
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Base Color Flats: Paint Bucket"}})
+
+    # Main silhouette bounding outline (strictly enclosed)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": f"Bounding Outline: Silhouette ({prompt})",
+            "points": stroke_enclosed_oval(s(400), s(400), s(165), s(145)),
+            "size": 4.5,
+            "color": pal["ink"],
+            "hardness": 0.95,
+            "opacity": 1.0,
+        },
+    })
+    # Clean Paint Bucket flood fill inside the completely enclosed boundary
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": f"Paint Bucket: Silhouette Base Flat ({prompt})",
+            "x": int(s(400)),
+            "y": int(s(400)),
+            "color": pal["wash"],
+            "sampleAllLayers": True,
+        },
+    })
+
+    if detail >= 2:
+        # Inner focal zone bounding contour + secondary fill
         steps.append({
             "cmd": "paint.stroke",
             "params": {
-                "name": f"Color Wash: Sweep {i+1}",
-                "points": stroke_line(s(400) - w, y, s(400) + w, y, steps=14, wobble=0.6),
-                "size": max(10.0, s(34.0 - t * 8)),
+                "name": "Bounding Outline: Inner Focal Zone",
+                "points": stroke_enclosed_oval(s(400), s(400), s(115), s(95)),
+                "size": 3.8,
+                "color": pal["ink"],
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": "Paint Bucket: Inner Focal Flat",
+                "x": int(s(400)),
+                "y": int(s(400)),
+                "color": pal["mid"],
+                "sampleAllLayers": True,
+            },
+        })
+
+    # Painterly surface glazes and textures over the solid flat (scales with detail level)
+    if detail <= 5:
+        glazes = int(round(2 + (detail - 1) * 1.0))
+    else:
+        glazes = int(round(6 + (detail - 5) * 1.5))
+    for i in range(glazes):
+        t = (i + 1) / (glazes + 1)
+        y = s(310 + t * 180)
+        w = s(80 + (1.0 - abs(t - 0.5) * 2) * 60)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Color Glaze: Texture Accents {i+1}",
+                "points": stroke_line(s(400) - w, y, s(400) + w, y, steps=10, wobble=0.3),
+                "size": max(8.0, s(20.0 - t * 4)),
                 "color": pal["wash"] if i % 2 == 0 else pal["mid"],
-                "hardness": 0.65,
-                "opacity": 0.85,
+                "hardness": 0.6,
+                "opacity": 0.55,
             },
         })
 
@@ -2116,6 +2828,9 @@ def plan_fallback(
 ) -> dict[str, Any]:
     """Select the best matching painterly plan based on prompt keywords, detail level (1 to 25), and style."""
     lowered = prompt.lower()
+
+    if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
+        return plan_painterly_pikachu(width, height, detail_level, style=style)
 
     if any(k in lowered for k in ["car", "racecar", "auto", "vehicle", "speed", "formula", "truck"]):
         return plan_painterly_racecar(width, height, detail_level, style=style)

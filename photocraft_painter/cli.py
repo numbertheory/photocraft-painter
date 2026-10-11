@@ -96,10 +96,21 @@ async def draw_prompt(
     console.print(f"[dim]Watching canvas update live in PhotoCraft...[/]")
 
     def on_progress(idx: int, total: int, name: str, step: dict[str, Any]) -> None:
+        cmd = step.get("cmd") or step.get("id") or ""
         params = step.get("params", {})
-        kind = params.get("kind", "")
-        fill = params.get("fill") or "outline"
-        desc = f"{kind} {fill}".strip()
+        if cmd == "paint.bucket":
+            col = params.get("color", "")
+            x = params.get("x", 0)
+            y = params.get("y", 0)
+            desc = f"paint bucket {col} @ ({x}, {y})"
+        elif cmd == "paint.stroke":
+            kind = params.get("kind", "")
+            fill = params.get("fill") or "brush stroke"
+            desc = f"{kind} {fill}".strip()
+        else:
+            kind = params.get("kind", "")
+            fill = params.get("fill") or "outline"
+            desc = f"{kind} {fill}".strip()
         console.print(
             f"  [cyan]({idx:02d}/{total:02d})[/] [bold]{name}[/] "
             f"[dim]({desc})[/]"
