@@ -888,6 +888,8 @@ def plan_painterly_rubber_duck(
         bg = "#ffffff"
     elif style_preset.id == "abstract":
         bg = "#111822"
+    elif style_preset.id == "cubism":
+        bg = "#1c1917"
 
     return {
         "title": format_document_title("Painterly Rubber Duck", style=style, detail_level=detail, model=model),
@@ -1179,6 +1181,8 @@ def plan_painterly_sunset(
         bg = "#f0f4f8"
     elif style_preset.id == "abstract":
         bg = "#0f141c"
+    elif style_preset.id == "cubism":
+        bg = "#1c1917"
 
     return {
         "title": format_document_title("Mountain Sunset at Dusk", style=style, detail_level=detail, model=model),
@@ -1786,6 +1790,8 @@ def plan_painterly_racecar(
         bg = "#ffffff"
     elif style_preset.id == "abstract":
         bg = "#161b22"
+    elif style_preset.id == "cubism":
+        bg = "#1c1917"
 
     return {
         "title": format_document_title("Painterly Racecar", style=style, detail_level=detail, model=model),
@@ -1832,6 +1838,7 @@ def plan_painterly_pikachu(
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
+        "#1c1917" if style_preset.id == "cubism" else
         "#f9fafb"
     )
 
@@ -2463,6 +2470,279 @@ def plan_painterly_pikachu(
     }
 
 
+def plan_cubist_dynamic_artwork(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "cubism",
+    model: str = "built-in",
+) -> dict[str, Any]:
+    """Generate drawing steps recreating an authentic Analytical & Synthetic Cubist artwork for any prompt.
+
+    Deconstructs the subject into interpenetrating angular geometric planes, multi-perspective
+    viewpoints, and high-contrast volumetric facet lighting that leaps off the canvas.
+    """
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+
+    # Palette
+    canvas_bg = "#1c1917"
+    ink_fracture = "#181512"
+    guide_axis = "#7d6b55"
+    ochre_facet = "#c29b62"
+    gold_facet = "#d4ac0d"
+    sienna_facet = "#a06535"
+    terracotta_facet = "#8c4d2d"
+    ivory_facet = "#faead6"
+    shadow_facet = "#34495e"
+    umber_deep = "#2c2118"
+    specular_hi = "#fefae0"
+
+    # 1. Construction & Multi-Perspective Axes
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"1. Analytical Axes: {prompt.title()}"}})
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Diagonal Perspective Grid 1",
+            "points": stroke_line(s(100), s(160), s(700), s(640), steps=20),
+            "size": 2.2,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.6,
+            "linear": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Counter-Diagonal Perspective Grid 2",
+            "points": stroke_line(s(700), s(160), s(100), s(640), steps=20),
+            "size": 2.2,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.6,
+            "linear": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Vertical Fracture Divide",
+            "points": stroke_line(s(400), s(120), s(400), s(680), steps=20),
+            "size": 2.2,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.6,
+            "linear": True,
+        },
+    })
+
+    # 2. Background Planar Shards
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Background Spatial Shards"}})
+    bg_shards = [
+        ("Background Facet: Upper Left Shard", [[s(0), s(0)], [s(350), s(0)], [s(220), s(300)], [s(0), s(220)]], "#2d251f", (s(120), s(100))),
+        ("Background Facet: Upper Right Shard", [[s(500), s(0)], [s(800), s(0)], [s(800), s(300)], [s(620), s(200)]], "#3a3128", (s(680), s(100))),
+        ("Background Facet: Lower Left Shadow", [[s(0), s(400)], [s(220), s(520)], [s(180), s(800)], [s(0), s(800)]], "#222b35", (s(80), s(620))),
+        ("Background Facet: Lower Right Earth", [[s(600), s(500)], [s(800), s(440)], [s(800), s(800)], [s(560), s(800)]], "#3e2d22", (s(700), s(650))),
+    ]
+    for shard_name, poly_verts, f_col, (cx_pt, cy_pt) in bg_shards:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{shard_name} (Boundary)",
+                "points": stroke_polygon(poly_verts, wobble=0.0, steps_per_side=15, closed=True),
+                "size": 3.6,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{shard_name} (Fill)",
+                "x": int(round(cx_pt)),
+                "y": int(round(cy_pt)),
+                "color": f_col,
+                "sampleAllLayers": True,
+            },
+        })
+
+    # 3. Core Subject: Multi-Perspective Angular Facets
+    steps.append({"cmd": "layer.new.layer", "params": {"name": f"3. Core Subject Facets ({prompt.title()})"}})
+    subject_facets = [
+        (
+            f"Facet: Frontal Key-Lit Plane ({prompt})",
+            [[s(320), s(260)], [s(440), s(220)], [s(460), s(380)], [s(340), s(400)]],
+            ivory_facet,
+            (s(390), s(315)),
+        ),
+        (
+            f"Facet: Isometric Top Perspective ({prompt})",
+            [[s(320), s(260)], [s(440), s(220)], [s(480), s(160)], [s(360), s(180)]],
+            gold_facet,
+            (s(400), s(205)),
+        ),
+        (
+            f"Facet: Profile Angled Projection ({prompt})",
+            [[s(220), s(350)], [s(340), s(280)], [s(340), s(460)], [s(240), s(500)]],
+            terracotta_facet,
+            (s(285), s(395)),
+        ),
+        (
+            f"Facet: Central Diagonal Ridge Plane ({prompt})",
+            [[s(340), s(400)], [s(460), s(380)], [s(520), s(480)], [s(380), s(520)]],
+            ochre_facet,
+            (s(425), s(445)),
+        ),
+        (
+            f"Facet: Deep Volumetric Shadow Plane ({prompt})",
+            [[s(460), s(380)], [s(560), s(320)], [s(580), s(480)], [s(520), s(480)]],
+            shadow_facet,
+            (s(530), s(415)),
+        ),
+        (
+            f"Facet: Lower Supporting Base Bevel ({prompt})",
+            [[s(280), s(520)], [s(520), s(480)], [s(500), s(600)], [s(300), s(620)]],
+            sienna_facet,
+            (s(400), s(555)),
+        ),
+        (
+            f"Facet: Base Cavity Umber Wedge ({prompt})",
+            [[s(300), s(620)], [s(500), s(600)], [s(480), s(660)], [s(320), s(670)]],
+            umber_deep,
+            (s(400), s(635)),
+        ),
+    ]
+
+    for f_name, poly_verts, f_col, (cx_pt, cy_pt) in subject_facets:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{f_name} (Boundary)",
+                "points": stroke_polygon(poly_verts, wobble=0.0, steps_per_side=15, closed=True),
+                "size": 4.0,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{f_name} (Fill)",
+                "x": int(round(cx_pt)),
+                "y": int(round(cy_pt)),
+                "color": f_col,
+                "sampleAllLayers": True,
+            },
+        })
+
+    # 4. Chiaroscuro Form Hatching & Master Fracture Lines
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "4. Chiaroscuro Hatching & Fracture Lines"}})
+    hatch_count = 6 + detail * 2
+    for h_i in range(1, hatch_count + 1):
+        t_h = h_i / (hatch_count + 1)
+        hx0 = s(460 + (t_h - 0.5) * 40)
+        hy0 = s(380 + t_h * 80)
+        hx1 = hx0 + s(35)
+        hy1 = hy0 - s(25)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Cubist Facet Plane Hatch {h_i}",
+                "points": stroke_line(hx0, hy0, hx1, hy1, steps=8),
+                "size": 2.5,
+                "color": ink_fracture,
+                "hardness": 0.95,
+                "opacity": 0.8,
+                "linear": True,
+            },
+        })
+
+    fracture_edges = [
+        ("Master Fracture: Frontal Facet Corner", [[s(320), s(260)], [s(440), s(220)], [s(460), s(380)], [s(340), s(400)]], 4.5),
+        ("Master Fracture: Profile Projection Ridge", [[s(220), s(350)], [s(340), s(280)], [s(340), s(460)]], 4.2),
+        ("Master Fracture: Central Spatial Ridge", [[s(340), s(400)], [s(460), s(380)], [s(520), s(480)]], 4.4),
+        ("Master Fracture: Base Contour Ridge", [[s(280), s(520)], [s(520), s(480)], [s(500), s(600)]], 4.2),
+    ]
+    for e_name, e_pts, e_sz in fracture_edges:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": e_name,
+                "points": stroke_polygon(e_pts, wobble=0.0, steps_per_side=12, closed=False),
+                "size": e_sz,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+
+    # 5. 3D Facet High-Relief Highlights
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "5. 3D Facet High-Relief Highlights"}})
+    relief_lights = [
+        ("Relief Highlight: Frontal Planar Apex", (s(325), s(262)), (s(360), s(250)), 4.0, specular_hi),
+        ("Relief Highlight: Top Perspective Ridge", (s(360), s(185)), (s(430), s(215)), 3.8, specular_hi),
+        ("Relief Highlight: Profile Projection Leading Edge", (s(225), s(355)), (s(265), s(330)), 4.2, "#ffffff"),
+        ("Relief Highlight: Central Ridge Vertex", (s(455), s(375)), (s(470), s(385)), 4.5, "#ffffff"),
+        ("Relief Highlight: Base Bevel Facet Glint", (s(320), s(525)), (s(380), s(515)), 3.5, specular_hi),
+    ]
+    for l_name, (lx0, ly0), (lx1, ly1), l_sz, l_col in relief_lights:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": l_name,
+                "points": stroke_line(lx0, ly0, lx1, ly1, steps=8),
+                "size": l_sz,
+                "color": l_col,
+                "hardness": 0.98,
+                "opacity": 0.95,
+                "linear": True,
+            },
+        })
+
+    if detail >= 6:
+        extra_facets = int(round((detail - 5) * 1.5))
+        for ef_i in range(min(extra_facets, 30)):
+            ang_f = (ef_i * 0.45) % math.pi
+            ef_cx = s(400 + math.cos(ang_f) * (70 + (ef_i % 4) * 35))
+            ef_cy = s(400 + math.sin(ang_f) * (70 + (ef_i % 4) * 35))
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Cubist Micro-Facet Edge {ef_i + 1}",
+                    "points": stroke_line(ef_cx - s(15), ef_cy - s(10), ef_cx + s(15), ef_cy + s(10), steps=6),
+                    "size": 2.2,
+                    "color": ink_fracture if ef_i % 2 == 0 else specular_hi,
+                    "hardness": 0.95,
+                    "opacity": 0.85,
+                    "linear": True,
+                },
+            })
+
+    title = format_document_title(f"Cubist {prompt.title()}", style="cubism", detail_level=detail, model=model)
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": canvas_bg,
+        "detail_level": detail,
+        "style": "cubism",
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+    }
+
+
 def plan_dynamic_artwork(
     prompt: str,
     width: int = 800,
@@ -2477,6 +2757,8 @@ def plan_dynamic_artwork(
     At detail level 5, ~50-60 brush strokes are generated; at detail level 25, ~250 brush strokes are generated.
     """
     style_preset = get_style(style)
+    if style_preset.id == "cubism":
+        return plan_cubist_dynamic_artwork(prompt, width, height, detail_level=detail_level, style=style, model=model)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -2960,6 +3242,742 @@ def is_portrait_or_face_prompt(prompt: str, images: list[Path] | None = None) ->
     return False
 
 
+def plan_cubist_portrait(
+    prompt: str = "portrait",
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "cubism",
+    model: str = "built-in",
+) -> dict[str, Any]:
+    """Generate drawing steps recreating an authentic Analytical & Synthetic Cubist portrait.
+
+    Deconstructs the human subject into interpenetrating geometric planes, polyhedral facets,
+    and multiple simultaneous perspectives (e.g. interlocking profile nose/brow intersecting
+    frontal eye, cheek, and lips), with sharp angular edges and high-contrast volumetric facet
+    lighting that leaps dramatically off the 2D surface.
+    """
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+
+    lowered = prompt.lower()
+    is_venus = any(k in lowered for k in ("venus", "bov", "botticelli", "goddess", "aphrodite"))
+    is_male = any(k in lowered for k in ("man", "male", "gentleman", "boy", "guy", "king", "prince"))
+
+    # Earthy Analytical Cubism Palette
+    canvas_bg = "#1c1917"       # Raw umber / deep charcoal canvas
+    ink_fracture = "#181512"    # Pitch charcoal fracture line
+    guide_axis = "#7d6b55"      # Earthy umber drafting axis
+    ochre_facet = "#c29b62"     # Raw ochre key-lit planar facet
+    gold_facet = "#d4a34b"      # Golden amber profile facet
+    sienna_facet = "#a06535"    # Warm burnt sienna midtone facet
+    terracotta_facet = "#8c4d2d"# Terracotta pop facet
+    ivory_facet = "#faead6"     # Radiant frontal ivory facet
+    shadow_facet = "#34495e"    # Cool slate counter-shadow facet
+    umber_deep = "#2c2118"      # Deep raw umber cavity shadow
+    lip_profile = "#b85955"     # Profile lip facet
+    lip_frontal = "#d97736"     # Frontal terracotta lip facet
+    lip_shadow = "#4a1c18"      # Deep angular lip parting
+    iris_col = "#5c4033" if is_male else "#6e7a48"
+    specular_hi = "#fefae0"     # Ivory specular high-relief highlight
+
+    # =========================================================================
+    # LAYER 1: ANALYTICAL CONSTRUCTION & MULTI-PERSPECTIVE AXES
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Analytical Construction: Multi-Perspective Axes"}})
+
+    # Central bisecting facial ridge axis
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Central Bisecting Facial Ridge",
+            "points": stroke_line(s(410), s(140), s(420), s(530), steps=20),
+            "size": 2.5,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.65,
+            "linear": True,
+        },
+    })
+    # Diagonal perspective fracture line 1 (45 deg)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Diagonal Spatial Fracture 1",
+            "points": stroke_line(s(120), s(180), s(680), s(620), steps=20),
+            "size": 2.0,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.55,
+            "linear": True,
+        },
+    })
+    # Diagonal perspective fracture line 2 (counter-angle)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Counter-Diagonal Spatial Fracture 2",
+            "points": stroke_line(s(680), s(160), s(160), s(660), steps=20),
+            "size": 2.0,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.55,
+            "linear": True,
+        },
+    })
+    # Dual eye-line axes (differing angles reflecting multiple viewpoints)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Profile Viewpoint Eye-Axis",
+            "points": stroke_line(s(330), s(310), s(410), s(290), steps=12),
+            "size": 2.0,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.6,
+            "linear": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Analytical Axis: Frontal Viewpoint Eye-Axis",
+            "points": stroke_line(s(410), s(320), s(520), s(310), steps=12),
+            "size": 2.0,
+            "color": guide_axis,
+            "hardness": 0.95,
+            "opacity": 0.6,
+            "linear": True,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 2: BACKGROUND PLANAR SHARDS & SPATIAL FRACTURES
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Background Spatial Shards"}})
+
+    bg_shards = [
+        (
+            "Background Facet: Upper Left Shard",
+            [[s(0), s(0)], [s(340), s(0)], [s(210), s(280)], [s(0), s(200)]],
+            "#2d251f",
+            (s(120), s(100)),
+        ),
+        (
+            "Background Facet: Upper Right Shard",
+            [[s(520), s(0)], [s(800), s(0)], [s(800), s(280)], [s(640), s(180)]],
+            "#3a3128",
+            (s(680), s(100)),
+        ),
+        (
+            "Background Facet: Lower Left Slate Shadow",
+            [[s(0), s(420)], [s(200), s(520)], [s(170), s(800)], [s(0), s(800)]],
+            "#222b35",
+            (s(80), s(620)),
+        ),
+        (
+            "Background Facet: Lower Right Terracotta Ground",
+            [[s(620), s(510)], [s(800), s(450)], [s(800), s(800)], [s(560), s(800)]],
+            "#3e2d22",
+            (s(700), s(650)),
+        ),
+    ]
+    for shard_name, poly_verts, f_col, (cx_pt, cy_pt) in bg_shards:
+        outline_pts = stroke_polygon(poly_verts, wobble=0.0, steps_per_side=15, closed=True)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{shard_name} (Boundary)",
+                "points": outline_pts,
+                "size": 3.6,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{shard_name} (Fill)",
+                "x": int(round(cx_pt)),
+                "y": int(round(cy_pt)),
+                "color": f_col,
+                "sampleAllLayers": True,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 3: TORSO & ANGULAR SHOULDERS (DUAL PERSPECTIVE)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "3. Torso & Shoulders: Multi-Perspective Planes"}})
+
+    # Left shoulder seen in 3/4 profile trapezoid
+    left_shoulder_verts = [[s(180), s(620)], [s(390), s(520)], [s(370), s(780)], [s(120), s(780)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Shoulder Facet: Left Profile Plane (Boundary)",
+            "points": stroke_polygon(left_shoulder_verts, wobble=0.0, steps_per_side=16, closed=True),
+            "size": 4.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Shoulder Facet: Left Profile Plane (Fill)",
+            "x": int(s(260)),
+            "y": int(s(660)),
+            "color": terracotta_facet,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Right shoulder seen in frontal planar triangle
+    right_shoulder_verts = [[s(420), s(520)], [s(660), s(610)], [s(720), s(780)], [s(440), s(780)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Shoulder Facet: Right Frontal Plane (Boundary)",
+            "points": stroke_polygon(right_shoulder_verts, wobble=0.0, steps_per_side=16, closed=True),
+            "size": 4.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Shoulder Facet: Right Frontal Plane (Fill)",
+            "x": int(s(550)),
+            "y": int(s(670)),
+            "color": ochre_facet,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # Neck column: Key-lit facet & shadow facet
+    neck_light_verts = [[s(380), s(450)], [s(430), s(450)], [s(435), s(535)], [s(390), s(535)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Neck Facet: Key-Lit Planar Column (Boundary)",
+            "points": stroke_polygon(neck_light_verts, wobble=0.0, steps_per_side=12, closed=True),
+            "size": 3.8,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Neck Facet: Key-Lit Planar Column (Fill)",
+            "x": int(s(410)),
+            "y": int(s(490)),
+            "color": gold_facet,
+            "sampleAllLayers": True,
+        },
+    })
+
+    neck_shadow_verts = [[s(430), s(450)], [s(475), s(460)], [s(485), s(540)], [s(435), s(535)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Neck Facet: Umber Shadow Column (Boundary)",
+            "points": stroke_polygon(neck_shadow_verts, wobble=0.0, steps_per_side=12, closed=True),
+            "size": 3.8,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Neck Facet: Umber Shadow Column (Fill)",
+            "x": int(s(455)),
+            "y": int(s(495)),
+            "color": umber_deep,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 4: DECONSTRUCTED HEAD & FACIAL PLANES
+    # Multi-perspective: Profile planes on left + Frontal planes on right
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "4. Deconstructed Head & Facial Planes"}})
+
+    head_facets = [
+        (
+            "Head Facet: Profile Forehead & Temple",
+            [[s(340), s(180)], [s(415), s(150)], [s(410), s(280)], [s(325), s(260)]],
+            ochre_facet,
+            (s(370), s(220)),
+        ),
+        (
+            "Head Facet: Frontal Forehead Key-Light Plane",
+            [[s(415), s(150)], [s(515), s(185)], [s(485), s(290)], [s(410), s(280)]],
+            ivory_facet,
+            (s(455), s(230)),
+        ),
+        (
+            "Head Facet: Profile Nose & Brow Projection",
+            # Sharp angular triangle jutting out in pure profile to the left!
+            [[s(410), s(280)], [s(335), s(355)], [s(415), s(385)]],
+            gold_facet,
+            (s(385), s(340)),
+        ),
+        (
+            "Head Facet: Left Profile Cheek & Jaw Plane",
+            [[s(325), s(260)], [s(415), s(385)], [s(385), s(470)], [s(305), s(380)]],
+            sienna_facet,
+            (s(355), s(380)),
+        ),
+        (
+            "Head Facet: Frontal Right Cheek & Zygomatic Plane",
+            [[s(410), s(280)], [s(485), s(290)], [s(525), s(395)], [s(435), s(415)]],
+            ivory_facet,
+            (s(465), s(350)),
+        ),
+        (
+            "Head Facet: Central Chiaroscuro Shadow Ridge",
+            # Interlocking central shadow facet providing dramatic 3D volumetric pop!
+            [[s(415), s(385)], [s(435), s(415)], [s(440), s(475)], [s(385), s(470)]],
+            shadow_facet,
+            (s(418), s(435)),
+        ),
+        (
+            "Head Facet: Angular Chin & Mandible Bevel",
+            [[s(385), s(470)], [s(440), s(475)], [s(455), s(525)], [s(375), s(515)]],
+            terracotta_facet,
+            (s(415), s(495)),
+        ),
+    ]
+
+    for f_name, poly_verts, f_col, (cx_pt, cy_pt) in head_facets:
+        outline_pts = stroke_polygon(poly_verts, wobble=0.0, steps_per_side=15, closed=True)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{f_name} (Boundary)",
+                "points": outline_pts,
+                "size": 4.0,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{f_name} (Fill)",
+                "x": int(round(cx_pt)),
+                "y": int(round(cy_pt)),
+                "color": f_col,
+                "sampleAllLayers": True,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 5: MULTI-PERSPECTIVE FACIAL FEATURES
+    # Profile eye & brow on left, Frontal eye & brow on right, Angular lips
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "5. Multi-Perspective Facial Features"}})
+
+    # 1. Profile Eyebrow (Angular chevron on left profile facet)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Profile Eyebrow Chevron",
+            "points": stroke_polygon([[s(325), s(255)], [s(365), s(260)], [s(395), s(275)]], wobble=0.0, steps_per_side=10, closed=False),
+            "size": 4.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+    # 2. Profile Eye (Sideways triangular almond eye angled in profile view)
+    prof_eye_verts = [[s(350), s(290)], [s(385), s(285)], [s(380), s(310)], [s(350), s(290)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Profile Eye Contour",
+            "points": stroke_polygon(prof_eye_verts, wobble=0.0, steps_per_side=12, closed=True),
+            "size": 3.6,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Profile Eye Sclera Fill",
+            "x": int(s(370)),
+            "y": int(s(295)),
+            "color": "#fffef5",
+            "sampleAllLayers": True,
+        },
+    })
+    # Profile pupil & iris
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Profile Pupil & Iris",
+            "points": stroke_polygon([[s(365), s(288)], [s(375), s(288)], [s(372), s(305)], [s(365), s(288)]], wobble=0.0, steps_per_side=8, closed=True),
+            "size": 3.0,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Profile Pupil Fill",
+            "x": int(s(370)),
+            "y": int(s(295)),
+            "color": iris_col,
+            "sampleAllLayers": True,
+        },
+    })
+
+    # 3. Frontal Eyebrow (Right side)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Frontal Eyebrow Arch",
+            "points": stroke_polygon([[s(430), s(295)], [s(470), s(285)], [s(510), s(296)]], wobble=0.0, steps_per_side=10, closed=False),
+            "size": 4.0,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    # 4. Frontal Eye (Almond eye in direct frontal gaze)
+    front_eye_verts = [[s(440), s(320)], [s(475), s(305)], [s(508), s(322)], [s(472), s(335)], [s(440), s(320)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Frontal Eye Contour",
+            "points": stroke_polygon(front_eye_verts, wobble=0.0, steps_per_side=12, closed=True),
+            "size": 3.6,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Frontal Eye Sclera Fill",
+            "x": int(s(475)),
+            "y": int(s(320)),
+            "color": "#fffef5",
+            "sampleAllLayers": True,
+        },
+    })
+    # Frontal iris & pupil
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Frontal Iris Boundary",
+            "points": stroke_polygon([[s(465), s(310)], [s(485), s(310)], [s(485), s(330)], [s(465), s(330)]], wobble=0.0, steps_per_side=8, closed=True),
+            "size": 3.0,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Frontal Iris Fill",
+            "x": int(s(475)),
+            "y": int(s(320)),
+            "color": iris_col,
+            "sampleAllLayers": True,
+        },
+    })
+    # Catchlight glint on frontal eye
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Eye Specular Catchlight",
+            "points": [[s(472), s(316), 1.0], [s(474), s(316), 1.0]],
+            "size": 4.0,
+            "color": "#ffffff",
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 5. Dual-Perspective Angular Lips
+    # Upper lip profile facet
+    lip_prof_verts = [[s(375), s(430)], [s(410), s(422)], [s(412), s(435)], [s(375), s(430)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Upper Lip Profile Facet (Boundary)",
+            "points": stroke_polygon(lip_prof_verts, wobble=0.0, steps_per_side=8, closed=True),
+            "size": 3.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Upper Lip Profile Facet (Fill)",
+            "x": int(s(395)),
+            "y": int(s(428)),
+            "color": lip_profile,
+            "sampleAllLayers": True,
+        },
+    })
+    # Upper lip frontal facet
+    lip_front_verts = [[s(410), s(422)], [s(455), s(428)], [s(435), s(438)], [s(412), s(435)], [s(410), s(422)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Upper Lip Frontal Facet (Boundary)",
+            "points": stroke_polygon(lip_front_verts, wobble=0.0, steps_per_side=8, closed=True),
+            "size": 3.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Upper Lip Frontal Facet (Fill)",
+            "x": int(s(428)),
+            "y": int(s(430)),
+            "color": lip_frontal,
+            "sampleAllLayers": True,
+        },
+    })
+    # Lower lip angular planar facet
+    lip_lower_verts = [[s(385), s(438)], [s(445), s(442)], [s(420), s(460)], [s(385), s(438)]]
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Lower Lip Planar Facet (Boundary)",
+            "points": stroke_polygon(lip_lower_verts, wobble=0.0, steps_per_side=10, closed=True),
+            "size": 3.2,
+            "color": ink_fracture,
+            "hardness": 1.0,
+            "polygon": True,
+        },
+    })
+    steps.append({
+        "cmd": "paint.bucket",
+        "params": {
+            "name": "Feature: Lower Lip Planar Facet (Fill)",
+            "x": int(s(415)),
+            "y": int(s(448)),
+            "color": terracotta_facet,
+            "sampleAllLayers": True,
+        },
+    })
+    # Lip parting fracture line
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Feature: Lip Parting Fracture Line",
+            "points": stroke_polygon([[s(375), s(435)], [s(412), s(435)], [s(445), s(442)]], wobble=0.0, steps_per_side=8, closed=False),
+            "size": 3.6,
+            "color": lip_shadow,
+            "hardness": 1.0,
+            "opacity": 1.0,
+            "polygon": True,
+        },
+    })
+
+    # =========================================================================
+    # LAYER 6: FACETED HAIR SHARDS (PLANAR LOCKS)
+    # Angular polygons strictly framing head and cheeks without obstructing features
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "6. Faceted Hair Shards"}})
+
+    hair_shards = [
+        (
+            "Hair Shard: Left Profile Temple Mass",
+            [[s(290), s(160)], [s(340), s(180)], [s(310), s(320)], [s(240), s(260)]],
+            "#4a3328",
+            (s(290), s(230)),
+        ),
+        (
+            "Hair Shard: Left Flowing Planar Lock",
+            [[s(240), s(260)], [s(310), s(320)], [s(280), s(450)], [s(210), s(400)]],
+            ochre_facet,
+            (s(260), s(360)),
+        ),
+        (
+            "Hair Shard: Right Crown Faceted Shard",
+            [[s(515), s(185)], [s(600), s(210)], [s(560), s(330)], [s(485), s(290)]],
+            gold_facet,
+            (s(540), s(250)),
+        ),
+        (
+            "Hair Shard: Right Cascading Terracotta Lock",
+            [[s(560), s(330)], [s(650), s(380)], [s(610), s(510)], [s(525), s(395)]],
+            sienna_facet,
+            (s(580), s(400)),
+        ),
+    ]
+
+    for h_name, poly_verts, f_col, (cx_pt, cy_pt) in hair_shards:
+        outline_pts = stroke_polygon(poly_verts, wobble=0.0, steps_per_side=15, closed=True)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"{h_name} (Boundary)",
+                "points": outline_pts,
+                "size": 4.2,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{h_name} (Fill)",
+                "x": int(round(cx_pt)),
+                "y": int(round(cy_pt)),
+                "color": f_col,
+                "sampleAllLayers": True,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 7: CHIAROSCURO FORM HATCHING & MASTER FRACTURE LINES
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "7. Chiaroscuro Form Hatching & Fractures"}})
+
+    # Planar directional hatching across shadow planes (angled at math.pi / 3.0)
+    hatch_count = 6 + detail * 2
+    for h_i in range(1, hatch_count + 1):
+        t_h = h_i / (hatch_count + 1)
+        hx0 = s(415 + (t_h - 0.5) * 20)
+        hy0 = s(390 + t_h * 70)
+        hx1 = hx0 - s(35)
+        hy1 = hy0 + s(25)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Chiaroscuro: Central Shadow Facet Hatch {h_i}",
+                "points": stroke_line(hx0, hy0, hx1, hy1, steps=8),
+                "size": 2.5,
+                "color": "#181512",
+                "hardness": 0.95,
+                "opacity": 0.75,
+                "linear": True,
+            },
+        })
+
+    # Master fracture lines tracing structural ridges with pitch charcoal
+    ridge_lines = [
+        ("Master Fracture: Nose Bridge Profile Ridge", [[s(410), s(280)], [s(335), s(355)], [s(415), s(385)]], 4.8),
+        ("Master Fracture: Frontal Zygomatic Crest", [[s(410), s(280)], [s(485), s(290)], [s(525), s(395)]], 4.2),
+        ("Master Fracture: Mandible & Chin Bevel", [[s(385), s(470)], [s(440), s(475)], [s(455), s(525)], [s(375), s(515)]], 4.4),
+        ("Master Fracture: Head Crown Fracture Axis", [[s(340), s(180)], [s(415), s(150)], [s(515), s(185)]], 4.0),
+    ]
+    for r_name, r_pts, r_size in ridge_lines:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": r_name,
+                "points": stroke_polygon(r_pts, wobble=0.0, steps_per_side=12, closed=False),
+                "size": r_size,
+                "color": ink_fracture,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "polygon": True,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 8: 3D FACET HIGH-RELIEF HIGHLIGHTS (LEAPING OFF THE CANVAS)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "8. 3D Facet High-Relief Highlights"}})
+
+    relief_highlights = [
+        ("Relief Highlight: Profile Nose Tip Vertex", (s(335), s(352)), (s(345), s(358)), 5.2, "#ffffff"),
+        ("Relief Highlight: Nose Bridge Leading Edge", (s(350), s(338)), (s(390), s(302)), 3.6, specular_hi),
+        ("Relief Highlight: Frontal Cheek Crest Apex", (s(455), s(330)), (s(495), s(350)), 3.8, specular_hi),
+        ("Relief Highlight: Forehead Planar Corner", (s(415), s(158)), (s(450), s(170)), 3.6, specular_hi),
+        ("Relief Highlight: Cupid's Bow Facet Gleam", (s(408), s(422)), (s(418), s(424)), 4.0, "#ffffff"),
+        ("Relief Highlight: Chin Bevel Facet Light", (s(410), s(485)), (s(435), s(488)), 3.4, specular_hi),
+    ]
+    for hi_name, (x0, y0), (x1, y1), hi_sz, hi_col in relief_highlights:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": hi_name,
+                "points": stroke_line(x0, y0, x1, y1, steps=8),
+                "size": hi_sz,
+                "color": hi_col,
+                "hardness": 0.98,
+                "opacity": 0.95,
+                "linear": True,
+            },
+        })
+
+    # Extra micro-facets and texture scaling with detail level (1 to 25)
+    if detail >= 6:
+        extra_facets = int(round((detail - 5) * 1.5))
+        for ef_i in range(min(extra_facets, 30)):
+            ang_f = (ef_i * 0.45) % math.pi
+            ef_cx = s(410 + math.cos(ang_f) * (60 + (ef_i % 4) * 30))
+            ef_cy = s(340 + math.sin(ang_f) * (60 + (ef_i % 4) * 30))
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Cubist Micro-Facet Edge {ef_i + 1}",
+                    "points": stroke_line(ef_cx - s(15), ef_cy - s(10), ef_cx + s(15), ef_cy + s(10), steps=6),
+                    "size": 2.2,
+                    "color": ink_fracture if ef_i % 2 == 0 else specular_hi,
+                    "hardness": 0.95,
+                    "opacity": 0.85,
+                    "linear": True,
+                },
+            })
+
+    base_title = "The Birth of Venus" if is_venus else ("Classical Male Study" if is_male else f"{prompt.title()} Study")
+    title = format_document_title(base_title, style="cubism", detail_level=detail, model=model)
+
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": canvas_bg,
+        "detail_level": detail,
+        "style": "cubism",
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+    }
+
+
 def plan_painterly_portrait(
     prompt: str = "portrait",
     width: int = 800,
@@ -2980,6 +3998,8 @@ def plan_painterly_portrait(
     7. Specular Highlights: Crisp eye catchlights, lip gloss, and lustrous golden hair sheen.
     """
     style_preset = get_style(style)
+    if style_preset.id == "cubism":
+        return plan_cubist_portrait(prompt, width, height, detail_level=detail_level, style=style, model=model)
     detail = max(1, min(detail_level, 25))
     scale = min(width, height) / 800.0
 
@@ -4004,6 +5024,13 @@ def plan_painterly_geometric_shape(
         shade_color = style_preset.adjust_color(fill_color, 0.7) or "#1b2631"
         guide_color = "#34495e"
         highlight_color = "#ffffff"
+    elif style_preset.id == "cubism":
+        bg_color = "#1c1917"
+        ink_color = "#181512"
+        fill_color = target_color or "#c29b62"
+        shade_color = "#3d322a"
+        guide_color = "#7d6b55"
+        highlight_color = "#fefae0"
     else:
         # Realistic / Painterly
         bg_color = "#161a22"
@@ -4073,6 +5100,22 @@ def plan_painterly_geometric_shape(
                 "polygon": True,
             },
         })
+    elif style_preset.id == "cubism":
+        # Analytical perspective fracture rays through each vertex
+        for i in range(len(vertices)):
+            p1 = vertices[i]
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Analytical Fracture Ray {i + 1}",
+                    "points": stroke_line(cx, cy, p1[0] + (p1[0] - cx) * 0.4, p1[1] + (p1[1] - cy) * 0.4, steps=15),
+                    "size": 2.2,
+                    "color": guide_color,
+                    "hardness": 0.95,
+                    "opacity": 0.65,
+                    "linear": True,
+                },
+            })
     else:
         # Subtle structural framing lines
         for i in range(len(vertices)):
@@ -4187,6 +5230,55 @@ def plan_painterly_geometric_shape(
                         "opacity": 0.75,
                     },
                 })
+        elif style_preset.id == "cubism":
+            # Multi-perspective 3D polyhedral facet planes
+            right_facet_verts = [apex, vertices[1], base_mid]
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Cubist Shadow Facet Plane Boundary",
+                    "points": stroke_polygon(right_facet_verts, wobble=0.0, steps_per_side=15, closed=True),
+                    "size": 3.4,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "polygon": True,
+                },
+            })
+            rcx = (apex[0] + vertices[1][0] + base_mid[0]) / 3.0
+            rcy = (apex[1] + vertices[1][1] + base_mid[1]) / 3.0
+            steps.append({
+                "cmd": "paint.bucket",
+                "params": {
+                    "name": "Cubist Shadow Facet Fill",
+                    "x": int(round(rcx)),
+                    "y": int(round(rcy)),
+                    "color": shade_color,
+                    "sampleAllLayers": True,
+                },
+            })
+            centroid = [(vertices[0][0] + vertices[1][0] + vertices[2][0]) / 3.0, (vertices[0][1] + vertices[1][1] + vertices[2][1]) / 3.0]
+            diag_facet_verts = [apex, centroid, vertices[2]]
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Cubist Intersecting Planar Facet Ridge",
+                    "points": stroke_polygon(diag_facet_verts, wobble=0.0, steps_per_side=12, closed=True),
+                    "size": 2.8,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "polygon": True,
+                },
+            })
+            steps.append({
+                "cmd": "paint.bucket",
+                "params": {
+                    "name": "Cubist Key-Lit Facet Fill",
+                    "x": int(round((apex[0] + centroid[0] + vertices[2][0]) / 3.0)),
+                    "y": int(round((apex[1] + centroid[1] + vertices[2][1]) / 3.0)),
+                    "color": style_preset.adjust_color(fill_color, 1.15) or "#d4ac0d",
+                    "sampleAllLayers": True,
+                },
+            })
         else:
             # Volumetric chiaroscuro sweeps along right facet
             rcx = (apex[0] + vertices[1][0] + base_mid[0]) / 3.0

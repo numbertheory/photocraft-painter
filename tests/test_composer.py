@@ -263,7 +263,7 @@ def test_densify_artwork_plan_scales_ai_models():
 
 
 def test_style_presets_and_lookup():
-    expected_styles = ["realistic", "dreamlike", "abstract", "sketchy", "cartoon", "painterly"]
+    expected_styles = ["realistic", "dreamlike", "abstract", "sketchy", "cartoon", "painterly", "cubism"]
     for s_name in expected_styles:
         assert s_name in STYLE_PRESETS
         preset = get_style(s_name)
@@ -276,6 +276,8 @@ def test_style_presets_and_lookup():
     assert get_style("DREAMLIKE").id == "dreamlike"
     assert get_style("Cartoon").id == "cartoon"
     assert get_style("   sKeTchY  ").id == "sketchy"
+    assert get_style("CUBISM").id == "cubism"
+    assert get_style("  Cubism  ").id == "cubism"
 
     # Default fallback to realistic for missing/invalid
     assert get_style(None).id == "realistic"
@@ -289,6 +291,7 @@ def test_style_color_adjustment():
     dreamlike = get_style("dreamlike")
     abstract = get_style("abstract")
     realistic = get_style("realistic")
+    cubism = get_style("cubism")
 
     orig_color = "#3498db"
     # Sketchy should desaturate towards graphite
@@ -307,6 +310,11 @@ def test_style_color_adjustment():
     # Abstract pops vibrant tones
     adj_abs = abstract.adjust_color(orig_color)
     assert adj_abs.startswith("#")
+
+    # Cubism shifts towards analytical ochre, sienna, and slate chiaroscuro
+    adj_cubism = cubism.adjust_color(orig_color)
+    assert adj_cubism.startswith("#")
+    assert adj_cubism != orig_color
 
     # None or non-hex returns as-is safely
     assert realistic.adjust_color(None) is None
@@ -364,6 +372,27 @@ def test_densify_artwork_plan_with_styles():
     for f in dream_flares:
         assert f["params"]["hardness"] == 0.5
 
+    # Cubism style densification produces sharp facet planes, edge fractures, and facet highlights
+    plan_cubism = densify_artwork_plan(raw_plan, detail_level=10, style="cubism")
+    assert plan_cubism["style"] == "cubism"
+    cubist_facets = [
+        s for s in plan_cubism["steps"]
+        if s.get("cmd") == "paint.stroke" and "Cubist Facet Plane" in s["params"].get("name", "")
+    ]
+    assert len(cubist_facets) > 0
+    for cf in cubist_facets:
+        assert cf["params"]["hardness"] == 0.98
+        assert cf["params"]["opacity"] == 0.95
+
+    cubist_fractures = [
+        s for s in plan_cubism["steps"]
+        if s.get("cmd") == "paint.stroke" and "Cubist Edge Fracture" in s["params"].get("name", "")
+    ]
+    assert len(cubist_fractures) > 0
+    for fr in cubist_fractures:
+        assert fr["params"]["hardness"] == 0.98
+        assert fr["params"]["color"] == "#181512"
+
 
 def test_plan_fallback_with_styles():
     duck_dream = plan_fallback("rubber duck", style="dreamlike")
@@ -385,6 +414,11 @@ def test_plan_fallback_with_styles():
     assert "Abstract" in dynamic_abstract["title"]
     assert dynamic_abstract["style"] == "abstract"
     assert dynamic_abstract["background"] == "#17202a"
+
+    portrait_cubism = plan_fallback("portrait of a woman", style="cubism")
+    assert "Cubism" in portrait_cubism["title"]
+    assert portrait_cubism["style"] == "cubism"
+    assert portrait_cubism["background"] == "#1c1917"
 
 
 def test_plan_artwork_style_forwarding():
@@ -1121,5 +1155,98 @@ def test_plan_fallback_routes_triangles_all_styles():
     poly_plan = plan_fallback("draw a 3-sided polygon", style="abstract")
     assert "Triangle" in poly_plan["title"] or "Polygon" in poly_plan["title"]
     assert "[Abstract]" in poly_plan["title"]
+
+
+def test_cubism_portrait_plan_multi_perspective_and_3d_relief():
+    portrait = plan_fallback("portrait of a woman", style="cubism", detail_level=5)
+    assert "[Cubism]" in portrait["title"]
+    assert "[Detail 5]" in portrait["title"]
+    assert portrait["style"] == "cubism"
+    assert portrait["background"] == "#1c1917"
+
+    step_names = [s.get("params", {}).get("name", "") for s in portrait["steps"]]
+
+    # 1. Multi-Perspective Analytical Axes
+    assert any("Central Bisecting Facial Ridge" in n for n in step_names)
+    assert any("Profile Viewpoint Eye-Axis" in n for n in step_names)
+    assert any("Frontal Viewpoint Eye-Axis" in n for n in step_names)
+
+    # 2. Deconstructed Head Facets (Profile + Frontal)
+    assert any("Profile Nose & Brow Projection" in n for n in step_names)
+    assert any("Frontal Right Cheek & Zygomatic Plane" in n for n in step_names)
+    assert any("Central Chiaroscuro Shadow Ridge" in n for n in step_names)
+
+    # 3. Multi-Perspective Features
+    assert any("Profile Eye Contour" in n for n in step_names)
+    assert any("Frontal Eye Contour" in n for n in step_names)
+    assert any("Upper Lip Profile Facet" in n for n in step_names)
+    assert any("Upper Lip Frontal Facet" in n for n in step_names)
+
+    # 4. 3D Facet High-Relief Highlights (Leaping off canvas)
+    assert any("Profile Nose Tip Vertex" in n for n in step_names)
+    assert any("Nose Bridge Leading Edge" in n for n in step_names)
+    assert any("Frontal Cheek Crest Apex" in n for n in step_names)
+
+    # 5. Watertight polygon boundaries with paint bucket fills
+    bucket_fills = [s for s in portrait["steps"] if s.get("cmd") == "paint.bucket"]
+    assert len(bucket_fills) >= 15
+    for bf in bucket_fills:
+        assert bf["params"]["sampleAllLayers"] is True
+        assert bf["params"]["color"].startswith("#")
+
+    # 6. Straight linear polygon vertices (no Catmull-Rom gum drops)
+    polygon_strokes = [
+        s for s in portrait["steps"]
+        if s.get("cmd") == "paint.stroke" and s.get("params", {}).get("polygon") is True
+    ]
+    assert len(polygon_strokes) >= 15
+    for ps in polygon_strokes:
+        assert ps["params"]["hardness"] >= 0.95
+
+
+def test_cubism_geometric_shape_multi_perspective():
+    geom = plan_fallback("draw a triangle", style="cubism", detail_level=5)
+    assert "[Cubism]" in geom["title"]
+    assert geom["style"] == "cubism"
+    assert geom["background"] == "#1c1917"
+
+    step_names = [s.get("params", {}).get("name", "") for s in geom["steps"]]
+
+    # Analytical fracture rays
+    assert any("Analytical Fracture Ray" in n for n in step_names)
+
+    # Multi-perspective 3D polyhedral facet planes
+    assert any("Cubist Shadow Facet Plane Boundary" in n for n in step_names)
+    assert any("Cubist Shadow Facet Fill" in n for n in step_names)
+    assert any("Cubist Intersecting Planar Facet Ridge" in n for n in step_names)
+    assert any("Cubist Key-Lit Facet Fill" in n for n in step_names)
+
+    # Paint bucket fills for the facets
+    buckets = [s for s in geom["steps"] if s.get("cmd") == "paint.bucket"]
+    assert len(buckets) >= 3  # Base fill, shadow facet fill, key-lit facet fill
+
+
+def test_cubism_dynamic_artwork():
+    artwork = plan_fallback("a cubist guitar", style="cubism", detail_level=5)
+    assert "[Cubism]" in artwork["title"]
+    assert artwork["style"] == "cubism"
+    assert artwork["background"] == "#1c1917"
+
+    step_names = [s.get("params", {}).get("name", "") for s in artwork["steps"]]
+
+    # Analytical perspective grid
+    assert any("Analytical Axis: Diagonal Perspective Grid" in n for n in step_names)
+    assert any("Analytical Axis: Counter-Diagonal Perspective Grid" in n for n in step_names)
+
+    # Multi-perspective facets
+    assert any("Facet: Frontal Key-Lit Plane" in n for n in step_names)
+    assert any("Facet: Isometric Top Perspective" in n for n in step_names)
+    assert any("Facet: Profile Angled Projection" in n for n in step_names)
+    assert any("Facet: Deep Volumetric Shadow Plane" in n for n in step_names)
+
+    # 3D relief highlights
+    assert any("Relief Highlight: Frontal Planar Apex" in n for n in step_names)
+    assert any("Relief Highlight: Profile Projection Leading Edge" in n for n in step_names)
+
 
 

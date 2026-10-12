@@ -1,6 +1,6 @@
 """Artistic style definitions and aesthetic presets for PhotoCraft Painter.
 
-Provides overarching art styles (realistic, dreamlike, abstract, sketchy, cartoon, painterly)
+Provides overarching art styles (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism)
 that govern prompt engineering, color palettes, brushstroke dynamics, and detail generation.
 """
 
@@ -60,6 +60,13 @@ class StylePreset:
                 r = int(min(255, (r + 30 if r > g else r * 0.8)) * factor)
                 g = int(min(255, (g + 30 if g > b else g * 0.8)) * factor)
                 b = int(min(255, (b + 30 if b > r else b * 0.8)) * factor)
+            elif self.id == "cubism":
+                # Earthy analytical cubism palette: ochre, sienna, slate, and heightened facet relief chiaroscuro
+                gray = int(0.299 * r + 0.587 * g + 0.114 * b)
+                r_c = int(min(255, (r * 0.6 + gray * 0.4 + 18) * (1.18 if gray > 120 else 0.82)) * factor)
+                g_c = int(min(255, (g * 0.55 + gray * 0.4 + 8) * (1.12 if gray > 120 else 0.80)) * factor)
+                b_c = int(min(255, (b * 0.42 + gray * 0.4) * (1.05 if gray > 120 else 0.78)) * factor)
+                r, g, b = r_c, g_c, b_c
             else:
                 # Realistic & Painterly: standard luminance scaling
                 r = int(r * factor)
@@ -179,6 +186,26 @@ STYLE_PRESETS: dict[str, StylePreset] = {
         wash_hardness=0.6,
         wash_opacity=0.88,
         color_mood="Expressive impasto pigments, warm/cool temperature vibration, rich layered glazes",
+    ),
+    "cubism": StylePreset(
+        id="cubism",
+        name="Cubism",
+        description="Deconstructed multi-perspective planar facets, angular geometric 3D relief, and interlocking analytical planes leaping off the canvas",
+        ai_guidance=(
+            "ARTISTIC STYLE: CUBISM (ANALYTICAL & SYNTHETIC CUBISM)\n"
+            "- Deconstruct subjects into interpenetrating geometric planes, polyhedral facets, and angular shards.\n"
+            "- Break free from single-point perspective: depict the subject from MULTIPLE PERSPECTIVES simultaneously (e.g. interlocking profile and frontal views of faces, simultaneous top and side views of objects).\n"
+            "- Use very angular, sharp edges: faceted polygons, intersecting diagonal planes, triangles, trapezoids, and geometric bevels.\n"
+            "- Render facets with high value and temperature contrast (light warm facet next to deep cool shadow facet) so 3D objects dramatically leap off the 2D surface.\n"
+            "- Palette: Earthy analytical ochre, raw sienna, burnt umber, charcoal, slate gray, and muted olive, accented with synthetic pops of terracotta, cadmium yellow, or cobalt.\n"
+            "- Emphasize intersecting structural lines, transparent overlapping planes, and faceted architectural geometry."
+        ),
+        wobble=0.1,
+        outline_hardness=0.98,
+        outline_size_scale=1.2,
+        wash_hardness=0.92,
+        wash_opacity=0.95,
+        color_mood="Earthy ochre, warm terracotta, slate gray, burnt umber, and high-contrast volumetric facet lighting",
     ),
 }
 

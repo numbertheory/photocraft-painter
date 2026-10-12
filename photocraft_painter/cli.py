@@ -292,7 +292,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 "  <prompt>          Compose and draw illustration live in PhotoCraft\n"
                 "  file:<path> <msg> Use reference image(s) to inspire composition (e.g. file:/path/to/apple.png make a green apple)\n"
                 "  /style            List all available artistic styles and show active style\n"
-                "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly)\n"
+                "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism)\n"
                 "  /model            List local & recommended models (https://ollama.com/search) with interactive selection\n"
                 "  /model <name|#>   Switch active AI model on the fly by name or list number\n"
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"

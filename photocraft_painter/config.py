@@ -37,7 +37,7 @@ class PainterConfig:
     default_width: int = 800
     default_height: int = 800
 
-    # Artistic style preset: realistic, dreamlike, abstract, sketchy, cartoon, painterly
+    # Artistic style preset: realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism
     style: str = field(
         default_factory=lambda: os.getenv("PAINTER_STYLE") or "realistic"
     )

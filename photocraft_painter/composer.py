@@ -183,6 +183,7 @@ The user prompt requests geometric shapes (e.g. triangle, square, polygon, hexag
 4. STYLE ADAPTATION (ESPECIALLY SKETCHY & CARTOON):
    - In "sketchy" style: include straight pencil drafting guide lines extending through each corner (corner overshoots) and directional diagonal facet cross-hatching.
    - In "cartoon" style: use bold, crisp, solid black ink outlines (size 5-6, hardness 1.0) and clean cel shading.
+   - In "cubism" style: deconstruct into multi-perspective planar facets, intersecting diagonal ridge lines, and high-contrast volumetric facet lighting leaping off the canvas.
 """
 
 
@@ -242,7 +243,7 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
                     bool(raw_params.get("polygon"))
                     or bool(raw_params.get("linear"))
                     or raw_params.get("shape") in ("polygon", "triangle", "poly", "rect")
-                    or any(k in name_lower for k in ("triangle", "polygon", "poly", "sided", "geometric", "corner", "vertex", "prism", "pyramid", "delta", "rect", "square", "diamond", "hexagon", "pentagon", "octagon"))
+                    or any(k in name_lower for k in ("triangle", "polygon", "poly", "sided", "geometric", "corner", "vertex", "prism", "pyramid", "delta", "rect", "square", "diamond", "hexagon", "pentagon", "octagon", "facet", "plane", "cubist", "cubism"))
                 )
 
                 if (is_closed or is_polygon_flag) and not raw_params.get("smooth"):
@@ -719,7 +720,7 @@ def densify_artwork_plan(
     If an AI model (Ollama / OpenAI) generates a foundation of ~30-50 master strokes,
     this engine generates rich multi-pass washes, form cross-hatching, calligraphy accents,
     and specular highlights shaped by the selected style preset (realistic, dreamlike, abstract,
-    sketchy, cartoon, painterly).
+    sketchy, cartoon, painterly, cubism).
     """
     style_preset = get_style(style)
     steps = plan.get("steps") or []
@@ -858,7 +859,7 @@ def densify_artwork_plan(
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
         mid_pt = pts[len(pts) // 2]
-        ang = math.atan2(dy, dx) + (math.pi / 3.0 if style_preset.id == "abstract" else math.pi / 4.0)
+        ang = math.atan2(dy, dx) + (math.pi / 3.0 if style_preset.id in ("abstract", "cubism") else math.pi / 4.0)
 
         passes_for_this = max(1, (q_shade - sh_count) // max(1, len(shadings)) + 1)
         for pass_i in range(1, passes_for_this + 1):
@@ -898,6 +899,12 @@ def densify_artwork_plan(
                 hatch_hardness = 0.95
                 hatch_opacity = 0.9
                 hatch_label = f"{name} (Vector Plane {sh_count})"
+            elif style_preset.id == "cubism":
+                hatch_color = style_preset.adjust_color(col, 0.72)
+                hatch_size = max(3.5, round(size * 0.38, 1))
+                hatch_hardness = 0.98
+                hatch_opacity = 0.95
+                hatch_label = f"{name} (Cubist Facet Plane {sh_count})"
             else:
                 hatch_color = style_preset.adjust_color(col, 0.88)
                 hatch_size = max(2.0, min(5.0, round(size * 0.22, 1)))
@@ -970,6 +977,12 @@ def densify_artwork_plan(
                 outline_hardness = 0.55
                 outline_opacity = 0.75
                 label = f"{name} (Ethereal Edge {c_count})"
+            elif style_preset.id == "cubism":
+                outline_color = "#181512"
+                outline_size = max(2.0, round(size * 0.85 * style_preset.outline_size_scale, 1))
+                outline_hardness = 0.98
+                outline_opacity = 0.98
+                label = f"{name} (Cubist Edge Fracture {c_count})"
             else:
                 outline_color = col
                 outline_size = max(1.8, round(size * 0.75 * style_preset.outline_size_scale, 1))
@@ -1041,6 +1054,12 @@ def densify_artwork_plan(
                 hi_hardness = 0.8
                 hi_opacity = 0.7
                 label = f"{name} (Eraser Light {h_count})"
+            elif style_preset.id == "cubism":
+                hi_color = "#fefae0" if h_count % 2 == 0 else "#fff8dc"
+                hi_size = max(3.0, round(size * 0.7, 1))
+                hi_hardness = 0.95
+                hi_opacity = 0.95
+                label = f"{name} (Facet Plane Light {h_count})"
             else:
                 hi_color = "#ffffff"
                 hi_size = max(2.5, round(size * 0.65, 1))
@@ -1229,6 +1248,7 @@ def compose_with_ollama(
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
+        "#1c1917" if style_preset.id == "cubism" else
         "#f8f9fa"
     )
 
@@ -1338,6 +1358,7 @@ def compose_with_openai(
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
+        "#1c1917" if style_preset.id == "cubism" else
         "#f8f9fa"
     )
 
