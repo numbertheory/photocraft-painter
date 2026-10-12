@@ -6,6 +6,7 @@ import os
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -44,6 +45,35 @@ class PainterConfig:
 
     # Detail level: 1 (minimal) to 25 (ultra detail with ~250 brushstrokes)
     detail_level: int = 5
+
+    # Refinement feedback loop: 1 (default: single pass, no loop) to 5 (1 initial + up to 4 refinement loops)
+    loop: int = field(
+        default_factory=lambda: max(1, min(5, int(os.getenv("PAINTER_LOOP") or "1")))
+    )
+
+    def __post_init__(self) -> None:
+        try:
+            object.__setattr__(self, "loop", max(1, min(5, int(self.loop))))
+        except (ValueError, TypeError):
+            object.__setattr__(self, "loop", 1)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("loop", "loop_count"):
+            try:
+                clamped = max(1, min(5, int(value)))
+            except (ValueError, TypeError):
+                clamped = 1
+            object.__setattr__(self, "loop", clamped)
+            return
+        object.__setattr__(self, name, value)
+
+    @property
+    def loop_count(self) -> int:
+        return self.loop
+
+    @loop_count.setter
+    def loop_count(self, value: int) -> None:
+        self.loop = value
 
     # AI Model Settings - Ollama is the default composer
     provider: str = field(

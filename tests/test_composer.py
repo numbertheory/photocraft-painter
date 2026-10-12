@@ -17,6 +17,8 @@ from photocraft_painter.composer import (
     normalize_step,
     parse_prompt_and_images,
     plan_artwork,
+    plan_refinement_artwork,
+    REFINEMENT_SYSTEM_PROMPT,
     sanitize_hair_strokes_against_face,
     validate_image_files,
 )
@@ -32,6 +34,7 @@ from photocraft_painter.fallback_composer import (
     plan_painterly_racecar,
     plan_painterly_rubber_duck,
     plan_painterly_sunset,
+    plan_refinement_fallback,
 )
 from photocraft_painter.strokes import (
     smooth_path,
@@ -1247,6 +1250,209 @@ def test_cubism_dynamic_artwork():
     # 3D relief highlights
     assert any("Relief Highlight: Frontal Planar Apex" in n for n in step_names)
     assert any("Relief Highlight: Profile Projection Leading Edge" in n for n in step_names)
+
+
+def test_config_loop_setting_and_clamping():
+    cfg = PainterConfig()
+    assert cfg.loop == 1
+    assert cfg.loop_count == 1
+
+    cfg.loop = 3
+    assert cfg.loop == 3
+    assert cfg.loop_count == 3
+
+    # Clamping range [1, 5]
+    cfg.loop_count = 0
+    assert cfg.loop == 1
+
+    cfg.loop_count = 10
+    assert cfg.loop == 5
+
+    cfg.loop = -5
+    assert cfg.loop == 1
+
+    cfg.loop = 99
+    assert cfg.loop == 5
+
+
+def test_plan_refinement_fallback_all_styles():
+    for style in ["realistic", "cubism", "cartoon", "sketchy", "dreamlike", "abstract"]:
+        refine = plan_refinement_fallback("a majestic portrait", width=800, height=800, detail_level=5, style=style, loop_iteration=1)
+        assert refine["is_refinement"] is True
+        assert refine["style"] == style
+        assert "critique" in refine and len(refine["critique"]) > 0
+        assert len(refine["steps"]) > 0
+        # No background wash step or doc creation in refinement steps
+        assert not any(s.get("cmd") == "doc.new" for s in refine["steps"])
+        assert any("Refinement" in s.get("params", {}).get("name", "") for s in refine["steps"])
+
+
+def test_plan_refinement_artwork_routing():
+    cfg_none = PainterConfig(provider="none", loop=2)
+    dummy_img = Path("/tmp/dummy_refinement_canvas.png")
+    plan, src = plan_refinement_artwork("a noble knight", cfg_none, current_image=dummy_img, loop_iteration=1)
+    assert plan["is_refinement"] is True
+    assert "Built-in Refiner" in src
+    assert "critique" in plan and len(plan["critique"]) > 0
+
+
+@pytest.mark.anyio
+async def test_capture_png_and_execute_live_drawing_refinement(tmp_path):
+    from photocraft_painter.artist import execute_live_drawing
+    from photocraft_painter.mcp_client import PhotocraftMcpClient
+
+    client = PhotocraftMcpClient(MagicMock())
+    client.call_tool = MagicMock()
+    async def mock_call(name, args=None):
+        if name == "doc_render_preview":
+            return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\rIDATx\x9cc`\x00\x00\x00\x02\x00\x01H\xaf\xa4q\x00\x00\x00\x00IEND\xaeB`\x82"
+        return {"status": "ok"}
+    client.call_tool.side_effect = mock_call
+
+    out_file = tmp_path / "canvas_snapshot.png"
+    captured = await client.capture_png(out_file)
+    assert captured.exists()
+    assert captured.stat().st_size > 0
+
+    cfg = PainterConfig(step_delay=0.0)
+    refine_plan = plan_refinement_fallback("portrait", loop_iteration=1)
+
+    await execute_live_drawing(client, refine_plan, cfg, create_canvas=False)
+    tool_calls = [c.args[0] for c in client.call_tool.call_args_list]
+    assert "doc_new" not in tool_calls
+
+
+@pytest.mark.anyio
+async def test_multi_loop_simulation(tmp_path):
+    from photocraft_painter.artist import execute_live_drawing
+    from photocraft_painter.mcp_client import PhotocraftMcpClient
+
+    client = PhotocraftMcpClient(MagicMock())
+    calls = []
+    async def mock_call(name, args=None):
+        calls.append(name)
+        if name == "doc_render_preview":
+            return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\rIDATx\x9cc`\x00\x00\x00\x02\x00\x01H\xaf\xa4q\x00\x00\x00\x00IEND\xaeB`\x82"
+        return {"status": "ok"}
+    client.call_tool = MagicMock(side_effect=mock_call)
+
+    cfg = PainterConfig(provider="none", loop=3, step_delay=0.0)
+    prompt = "a majestic cat"
+
+    # 1. Initial Pass
+    initial_plan, _ = plan_artwork(prompt, cfg)
+    await execute_live_drawing(client, initial_plan, cfg, create_canvas=True)
+    assert "doc_new" in calls
+    doc_new_count = calls.count("doc_new")
+    assert doc_new_count == 1
+
+    # 2. Refinement loop iterations = loop - 1 = 2
+    loop_passes = cfg.loop - 1
+    assert loop_passes == 2
+
+    for i in range(1, loop_passes + 1):
+        snapshot = await client.capture_png(tmp_path / f"snap_{i}.png")
+        assert snapshot.exists()
+        refine_plan, _ = plan_refinement_artwork(prompt, cfg, current_image=snapshot, loop_iteration=i)
+        assert refine_plan["is_refinement"] is True
+        assert len(refine_plan["critique"]) > 0
+        await execute_live_drawing(client, refine_plan, cfg, create_canvas=False)
+
+    # doc_new must NEVER be called again during refinement passes
+    assert calls.count("doc_new") == 1
+
+
+def test_refinement_instructions_emphasize_logical_errors_and_intersections():
+    # Verify REFINEMENT_SYSTEM_PROMPT directs model to find logical errors, background intersections, and style violations
+    prompt_upper = REFINEMENT_SYSTEM_PROMPT.upper()
+    assert "LOGICAL ERRORS" in prompt_upper
+    assert "INTERSECT" in prompt_upper
+    assert "WATER" in prompt_upper
+    assert "DUCK" in prompt_upper
+    assert "OPAQUE" in prompt_upper
+    assert "STYLE VIOLATIONS" in prompt_upper
+    assert "COVER" in prompt_upper or "REPAIR" in prompt_upper
+
+
+def test_plan_refinement_fallback_duck_resolves_water_intersection():
+    plan = plan_refinement_fallback("a rubber duck splashing in water", style="cartoon", loop_iteration=1)
+    assert plan["is_refinement"] is True
+    assert "layering error" in plan["critique"].lower() or "intersect" in plan["critique"].lower()
+
+    step_names = [s.get("params", {}).get("name", "") for s in plan["steps"]]
+    # Must have base occlusion repair layer and stroke covering intersecting water
+    assert any("Base Occlusion" in n or "Cover Intersecting Water" in n for n in step_names)
+    assert any("Waterline Base Contact Foam" in n for n in step_names)
+
+    # Check that opaque yellow base stroke is present with opacity 1.0
+    cover_strokes = [
+        s for s in plan["steps"]
+        if s.get("cmd") == "paint.stroke" and "Cover Intersecting Water" in s.get("params", {}).get("name", "")
+    ]
+    assert len(cover_strokes) > 0
+    assert cover_strokes[0]["params"]["opacity"] == 1.0
+    assert cover_strokes[0]["params"]["size"] >= 20.0
+
+
+def test_refinement_progressive_phase_guidance():
+    from photocraft_painter.composer import get_refinement_phase_guidance
+
+    # Pass 1 of 4: Phase 1 (Occlusion & Base Flats)
+    g1 = get_refinement_phase_guidance(1, 4, "cartoon")
+    assert "PASS 1" in g1
+    assert "SHADOW SPOTS" in g1.upper() and ("DO NOT" in g1.upper() or "NO" in g1.upper())
+    assert "BASE" in g1.upper()
+
+    # Pass 2 of 4: Phase 2 (Form Modeling & Continuous Shadow)
+    g2 = get_refinement_phase_guidance(2, 4, "cartoon")
+    assert "PASS 2" in g2
+    assert "CONTINUOUS" in g2.upper()
+
+    # Pass 3 of 4: Phase 3 (Facial Features & Splashes)
+    g3 = get_refinement_phase_guidance(3, 4, "cartoon")
+    assert "PASS 3" in g3
+    assert "FACIAL" in g3.upper() or "FOCAL" in g3.upper()
+
+    # Pass 4 of 4: Phase 4 (Master Inking & Specular Highlights)
+    g4 = get_refinement_phase_guidance(4, 4, "cartoon")
+    assert "PASS 4" in g4
+    assert "INK" in g4.upper() or "SPECULAR" in g4.upper()
+
+
+def test_refinement_strict_ban_on_shadow_spots_in_prompt():
+    prompt_upper = REFINEMENT_SYSTEM_PROMPT.upper()
+    assert 'STRICT BAN ON "SHADOW SPOTS"' in prompt_upper or "STRICT BAN ON 'SHADOW SPOTS'" in prompt_upper
+    assert "DASH CLUSTERS" in prompt_upper
+    assert "MEASLES" in prompt_upper or "SCATTER" in prompt_upper
+    assert "CONTINUOUS" in prompt_upper
+
+
+def test_plan_refinement_fallback_progressive_phases_and_no_dash_clusters():
+    # Pass 1: Occlusion & base flats
+    p1 = plan_refinement_fallback("a rubber duck in water", style="cartoon", loop_iteration=1, total_iterations=4)
+    step_names_1 = [s.get("params", {}).get("name", "") for s in p1["steps"]]
+    assert any("Base Occlusion" in n for n in step_names_1)
+    # Must NOT have any shadow spots or dash clusters
+    assert not any("Shadow Spot" in n or "Dash" in n for n in step_names_1)
+
+    # Pass 2: Volumetric continuous shadow (NO dash clusters)
+    p2 = plan_refinement_fallback("a rubber duck in water", style="cartoon", loop_iteration=2, total_iterations=4)
+    step_names_2 = [s.get("params", {}).get("name", "") for s in p2["steps"]]
+    assert any("Continuous Form Shadow" in n for n in step_names_2)
+    assert not any("Shadow Spot" in n or "Dash" in n for n in step_names_2)
+
+    # Pass 3: Facial features & splashes
+    p3 = plan_refinement_fallback("a rubber duck in water", style="cartoon", loop_iteration=3, total_iterations=4)
+    step_names_3 = [s.get("params", {}).get("name", "") for s in p3["steps"]]
+    assert any("Eye" in n or "Beak" in n or "Splash" in n for n in step_names_3)
+
+    # Pass 4: Inking & highlights
+    p4 = plan_refinement_fallback("a rubber duck in water", style="cartoon", loop_iteration=4, total_iterations=4)
+    step_names_4 = [s.get("params", {}).get("name", "") for s in p4["steps"]]
+    assert any("Ink" in n or "Highlight" in n for n in step_names_4)
+
+
+
 
 
 

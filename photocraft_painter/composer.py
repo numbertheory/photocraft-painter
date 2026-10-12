@@ -16,6 +16,7 @@ from photocraft_painter.fallback_composer import (
     plan_fallback,
     plan_painterly_geometric_shape,
     plan_painterly_portrait,
+    plan_refinement_fallback,
 )
 from photocraft_painter.strokes import (
     smooth_path,
@@ -1395,6 +1396,13 @@ def plan_artwork(
     detail = max(1, min(config.detail_level, 25))
     style_preset = get_style(config.style)
 
+    # 0. Explicit offline / procedural fallback requested
+    if config.provider in ("none", "fallback", "builtin"):
+        logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
+        plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images, model="built-in")
+        plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
+        return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
+
     # 1. If OpenAI provider is requested
     if config.provider == "openai":
         try:
@@ -1405,7 +1413,7 @@ def plan_artwork(
             logger.warning("OpenAI composition failed: %s", e)
 
     # 2. Try Ollama (Default or secondary)
-    if config.provider == "ollama" or (not config.openai_api_key and not config.openai_base_url):
+    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url):
         try:
             plan = compose_with_ollama(prompt, config, width, height, images=images)
             if plan.get("steps"):
@@ -1427,3 +1435,422 @@ def plan_artwork(
     plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images, model="built-in")
     plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
     return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
+
+
+REFINEMENT_SYSTEM_PROMPT = """You are a master artist and art director conducting an iterative refinement feedback pass in PhotoCraft.
+You are inspecting a rendered snapshot of the current in-progress digital canvas.
+
+PRIMARY DIRECTIVES & ARTISTIC STANDARDS:
+1. STRICT BAN ON "SHADOW SPOTS" / DASH CLUSTERS:
+   NEVER generate a scatter of short, disconnected diagonal tick marks, dashed lines, speckles, or spot clusters across the body!
+   This looks like dirty measles, noise, or messy scribbles.
+   In Cartoon/Cel style and across all art styles, shading must ALWAYS be a single continuous, contiguous shadow plane
+   (e.g. ONE smooth, wide crescent stroke along the underside curve, or a solid cel shadow shape), NEVER 10-20 tiny disconnected dash marks!
+
+2. COMPLETE OCCLUSION REPAIR BEFORE POLISH (PHASE 1 PRIORITY):
+   Do NOT leave unpainted gaps, holes, or intersecting environmental lines!
+   If water lines, horizons, sky, or background washes mistakenly cut across an opaque foreground subject (e.g. blue water cutting through a yellow duck),
+   you MUST completely paint over EVERY gap and intersecting line using wide, solid opaque strokes (size: 30-60, opacity: 1.0)
+   in the subject's primary base flat color until the subject is 100% solid, sealed, and uniform.
+
+3. CLEAN UP MESSY WIREFRAME SCRIBBLES:
+   If earlier steps created multiple tangled, overlapping wireframe circles or messy construction scratches around the head, eyes, or body,
+   paint a clean opaque base flat over the interior of the subject to cleanly erase the messy inner lines, then re-ink ONE single, confident outer contour.
+
+4. ELIMINATE LOGICAL ERRORS AND STYLE VIOLATIONS:
+   Scrutinize the image for logical errors and style violations (e.g. background elements incorrectly intersecting the foreground subject, inconsistent cartoon/cel inking, or broken silhouettes).
+
+PROGRESSIVE REFINEMENT PIPELINE ACROSS PASSES:
+- PASS 1: COMPLETE STRUCTURAL REPAIR & SOLID BASE FLATS
+  Fix 100% of holes, background cuts, and occlusion errors. Opaque base color over all leaks. Single clean outer silhouette boundary. (NO shadow speckles!).
+- PASS 2: VOLUMETRIC FORM MODELING & WATERLINE/ENVIRONMENT GROUNDING
+  Continuous, smooth shadow sweeps along underside curves (NO spot clusters!). Crisp waterline contact foam ripples along the bottom base where the subject rests on the water.
+- PASS 3: FACIAL FEATURES, ANATOMY & DYNAMIC SPLASHES
+  Refine crisp focal features: clean circular eyes with pupils and white catchlight dots; bill/beak smile contour with clear separation; dynamic flying water droplets and splash particles.
+- PASS 4: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING
+  Weighted master ink contours around the primary silhouette for maximum graphic punch; brilliant specular highlights on head crest, beak, and water ripples.
+
+Output strictly valid JSON matching this schema:
+{
+  "critique": "Detailed analysis diagnosing logical errors, style violations, holes, wireframe scribbles, and describing the specific corrective phase actions taken.",
+  "steps": [
+    {
+      "cmd": "layer.new.layer",
+      "params": {
+        "name": "Refinement: Base Color Repair & Occlusion Fix"
+      }
+    },
+    {
+      "cmd": "paint.stroke",
+      "params": {
+        "name": "Opaque Base Color to Cover Intersecting Background Line",
+        "points": [[260, 480], [380, 480], [500, 480], [560, 480]],
+        "size": 45.0,
+        "color": "#f1c40f",
+        "hardness": 1.0,
+        "opacity": 1.0
+      }
+    },
+    {
+      "cmd": "layer.new.layer",
+      "params": {
+        "name": "Refinement: Restored Silhouette & Contact Waterline"
+      }
+    },
+    {
+      "cmd": "paint.stroke",
+      "params": {
+        "name": "Crisp Outer Contour",
+        "points": [[280, 520], [420, 560], [540, 520]],
+        "size": 5.0,
+        "color": "#111111",
+        "hardness": 1.0,
+        "opacity": 1.0
+      }
+    },
+    {
+      "cmd": "paint.stroke",
+      "params": {
+        "name": "Waterline Contact Foam along Base",
+        "points": [[240, 545], [380, 560], [520, 560], [580, 540]],
+        "size": 4.0,
+        "color": "#ffffff",
+        "hardness": 0.95,
+        "opacity": 0.95
+      }
+    }
+  ]
+}
+"""
+
+
+def get_refinement_phase_guidance(loop_iteration: int, total_iterations: int = 1, style: str = "realistic") -> str:
+    """Return stage-specific artist instructions for progressive refinement loops (Pass 1 to 4)."""
+    phase = min(loop_iteration, 4)
+    is_cartoon = style.lower() in ("cartoon", "cel")
+
+    if phase == 1:
+        return (
+            f"=== REFINEMENT PASS 1 OF {total_iterations}: COMPLETE OCCLUSION REPAIR & SOLID BASE FLATS ===\n"
+            "MISSION: 100% SOLID REPAIR OF ALL OCCLUSION ERRORS, HOLES, AND INTERSECTING LINES.\n"
+            "- CRITICAL PRIORITY: Inspect the subject for unpainted gaps, holes, and background cuts. "
+            "If environmental lines (like water, horizon, sky, or room lines) cut through or bisect the subject's body, wing, neck, or head, "
+            "you MUST paint over EVERY gap and intersecting line using wide, solid opaque strokes (size: 35-60, opacity: 1.0) "
+            "in the subject's primary base color (e.g. opaque yellow for duck body, solid base tone for objects). "
+            "DO NOT leave partial gaps or lines showing through! Make the subject 100% solid, sealed, and opaque!\n"
+            "- SILHOUETTE BOUNDARY: Draw a clean, single-line outer contour around the repaired perimeter.\n"
+            "- CLEAN UP SCRIBBLES: Paint over any messy interior construction scribbles or tangled wireframe lines.\n"
+            "- STRICT PROHIBITION: DO NOT add shading dots, hatch marks, or shadow spots on Pass 1! Focus 100% on achieving a solid, gap-free subject."
+        )
+    elif phase == 2:
+        return (
+            f"=== REFINEMENT PASS 2 OF {total_iterations}: VOLUMETRIC FORM MODELING & WATERLINE/ENVIRONMENT GROUNDING ===\n"
+            "MISSION: ADD CONTINUOUS FORM SHADOWS AND CLEAN ENVIRONMENTAL GROUNDING.\n"
+            "- CONTINUOUS SHADOW PLANES: Add smooth, broad volumetric shadows along the underside curves (e.g. ONE sweeping underside belly shadow curve, "
+            "ONE clean shadow band under the wing, shadow under the bill/head). "
+            "STRICT BAN: NEVER emit rows of small dash marks, speckles, or shadow spots across the body! "
+            f"{'In Cartoon/Cel style, shadows MUST be clean, solid contiguous cel-shading shapes—never noisy dots or hatching.' if is_cartoon else 'Shading must be smooth, unified, and continuous.'}\n"
+            "- WATERLINE & CONTACT ANCHOR: Draw crisp white foam ripples and contact wake strictly along the bottom contact perimeter "
+            "where the subject rests on the water (NEVER intersecting the body), plus a subtle warm reflection in the water below.\n"
+            "- INTERIOR CONTOURS: Crisp inking on key interior divisions (e.g. wing outline, neck curve) using single confident strokes."
+        )
+    elif phase == 3:
+        return (
+            f"=== REFINEMENT PASS 3 OF {total_iterations}: FACIAL FEATURES, ANATOMY & DYNAMIC SPLASHES ===\n"
+            "MISSION: PERFECT THE ANATOMY, FOCAL FEATURES, AND DYNAMIC ENVIRONMENT INTERACTION.\n"
+            "- FACIAL FEATURES & ANATOMY: Refine focal features with high precision: clean circular eye with dark pupil and crisp white catchlight dot; "
+            "define the smiling beak/bill contour with clear separation between upper and lower bill, and subtle nostril accents.\n"
+            "- DYNAMIC WATER SPLASHES & PARTICLES: Add flying water splash arcs, droplet dots, and surface foam bubbles radiating outward "
+            "from the contact base to bring the scene alive.\n"
+            "- SURFACE PLANES: Define wing feather arcs or planar rhythm lines with sharp, elegant strokes."
+        )
+    else:
+        return (
+            f"=== REFINEMENT PASS {phase} OF {total_iterations}: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING ===\n"
+            "MISSION: FINAL GRAPHIC POLISH, MASTER INK CONTOURS, AND BRILLIANT SPECULAR GLEAMS.\n"
+            "- MASTER INK CONTOURS: Trace weighted, polished master ink outlines along the primary silhouette and focal contours for maximum contrast and pop.\n"
+            "- BRILLIANT SPECULAR HIGHLIGHTS: Add crisp, white specular catchlights on the head crest, bill bridge, cheek gloss, and water ripples.\n"
+            "- FINAL CLEANUP: Cover any remaining stray marks with opaque clean background or base tones."
+        )
+
+
+def compose_refinement_with_ollama(
+    prompt: str,
+    config: PainterConfig,
+    current_image: Path,
+    loop_iteration: int = 1,
+    total_iterations: int = 1,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Generate targeted refinement brushstrokes using Ollama vision model."""
+    import ollama
+
+    client = ollama.Client(host=config.ollama_host)
+    model = config.ollama_model
+    style_preset = get_style(config.style)
+    detail = max(1, min(config.detail_level, 25))
+
+    refinement_images = [str(current_image.resolve())]
+    if images:
+        for img in images:
+            if img.exists() and str(img.resolve()) not in refinement_images:
+                refinement_images.append(str(img.resolve()))
+
+    phase_guidance = get_refinement_phase_guidance(loop_iteration, total_iterations, style_preset.id)
+
+    user_text = (
+        f"Here is the rendered PNG of the active drawing in progress on a {width}x{height} canvas.\n"
+        f"Intended target prompt: '{prompt}'\n"
+        f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+        f"Color Mood: {style_preset.color_mood}\n"
+        f"Refinement Loop Pass: {loop_iteration} of {total_iterations}\n\n"
+        f"{phase_guidance}\n\n"
+        "STRICT BAN ON SHADOW SPOTS: Do NOT emit rows of short dashed strokes, spots, or messy speckles across the body! "
+        "Every stroke must serve a clear purpose (solid opaque base repair, continuous form shadow, clean boundary inking, or crisp catchlights).\n"
+        "Output strictly valid JSON with 'critique' and 'steps'."
+    )
+
+    style_system = f"{REFINEMENT_SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+
+    try:
+        res = client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": style_system},
+                {
+                    "role": "user",
+                    "content": user_text,
+                    "images": refinement_images,
+                },
+            ],
+            options={
+                "num_ctx": 16384,
+                "num_predict": 4096,
+                "temperature": 0.35,
+            },
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if "multimodal" in err_msg.lower() or "does not support images" in err_msg.lower():
+            raise ValueError(
+                f"Model '{model}' does not support vision/image input. "
+                f"Please switch to a vision model (e.g. /model llama3.2-vision:11b or /model gpt-4o-mini)."
+            ) from e
+        raise
+
+    content = res.message.content or ""
+    if not content:
+        raise ValueError(f"Ollama model '{model}' returned empty content")
+
+    data = extract_json_from_response(content)
+    raw_steps = data.get("steps") or []
+    if not isinstance(raw_steps, list):
+        raise ValueError("Response did not contain a valid 'steps' array")
+
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
+
+    critique = data.get("critique") or data.get("problems") or (
+        f"Refinement Pass {loop_iteration}: Enhancing contrast, defining contours, and adding highlights."
+    )
+
+    base_title = data.get("title") or f"{prompt.title()} Refine {loop_iteration}"
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=model)
+
+    return {
+        "title": title,
+        "critique": str(critique),
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": normalized_steps,
+        "is_refinement": True,
+    }
+
+
+def compose_refinement_with_openai(
+    prompt: str,
+    config: PainterConfig,
+    current_image: Path,
+    loop_iteration: int = 1,
+    total_iterations: int = 1,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Generate targeted refinement brushstrokes using OpenAI vision model."""
+    import base64
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=config.openai_api_key or "sk-dummy",
+        base_url=config.openai_base_url,
+    )
+    style_preset = get_style(config.style)
+    detail = max(1, min(config.detail_level, 25))
+
+    phase_guidance = get_refinement_phase_guidance(loop_iteration, total_iterations, style_preset.id)
+
+    user_text = (
+        f"Here is the rendered PNG of the active drawing in progress on a {width}x{height} canvas.\n"
+        f"Intended target prompt: '{prompt}'\n"
+        f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+        f"Color Mood: {style_preset.color_mood}\n"
+        f"Refinement Loop Pass: {loop_iteration} of {total_iterations}\n\n"
+        f"{phase_guidance}\n\n"
+        "STRICT BAN ON SHADOW SPOTS: Do NOT emit rows of short dashed strokes, spots, or messy speckles across the body! "
+        "Every stroke must serve a clear purpose (solid opaque base repair, continuous form shadow, clean boundary inking, or crisp catchlights).\n"
+        "Output strictly valid JSON with 'critique' and 'steps'."
+    )
+
+    content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+
+    # In-progress image
+    b64_in_prog = base64.b64encode(current_image.read_bytes()).decode("utf-8")
+    content_parts.append({
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{b64_in_prog}"},
+    })
+
+    # Optional original references
+    if images:
+        for p in images:
+            if p.exists() and p != current_image:
+                b64_data = base64.b64encode(p.read_bytes()).decode("utf-8")
+                ext = p.suffix.lstrip(".").lower() or "png"
+                if ext == "jpg":
+                    ext = "jpeg"
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/{ext};base64,{b64_data}"},
+                })
+
+    style_system = f"{REFINEMENT_SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+
+    response = client.chat.completions.create(
+        model=config.openai_model,
+        messages=[
+            {"role": "system", "content": style_system},
+            {"role": "user", "content": content_parts},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.35,
+    )
+
+    content = response.choices[0].message.content or "{}"
+    data = extract_json_from_response(content)
+    raw_steps = data.get("steps") or []
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
+
+    critique = data.get("critique") or data.get("problems") or (
+        f"Refinement Pass {loop_iteration}: Enhancing contrast, defining contours, and adding highlights."
+    )
+
+    base_title = data.get("title") or f"{prompt.title()} Refine {loop_iteration}"
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=config.openai_model)
+
+    return {
+        "title": title,
+        "critique": str(critique),
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": config.openai_model.strip().replace(":", "-").replace("/", "-"),
+        "steps": normalized_steps,
+        "is_refinement": True,
+    }
+
+
+def plan_refinement_artwork(
+    prompt: str,
+    config: PainterConfig,
+    current_image: Path,
+    loop_iteration: int = 1,
+    total_iterations: int = 1,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Plan iterative refinement steps given in-progress canvas PNG snapshot.
+
+    Submits current_image back to the AI with stage-specific phase instructions to identify problems
+    and generate corrective brushstrokes to get closer to the intended target.
+    Honors config.provider and falls back gracefully to procedural plan_refinement_fallback.
+    """
+    style_preset = get_style(config.style)
+
+    # 0. Offline / procedural fallback requested
+    if config.provider in ("none", "fallback", "builtin"):
+        logger.info("Using built-in procedural refiner for '%s' (style: %s, loop: %d/%d)", prompt, style_preset.name, loop_iteration, total_iterations)
+        plan = plan_refinement_fallback(
+            prompt,
+            width,
+            height,
+            detail_level=config.detail_level,
+            style=config.style,
+            current_image=current_image,
+            loop_iteration=loop_iteration,
+            total_iterations=total_iterations,
+            model="built-in",
+        )
+        return plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})"
+
+    # 1. If OpenAI provider is requested
+    if config.provider == "openai":
+        try:
+            plan = compose_refinement_with_openai(
+                prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
+            )
+            if plan.get("steps"):
+                return plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}"
+        except Exception as e:
+            logger.warning("OpenAI refinement composition failed: %s", e)
+
+    # 2. Try Ollama (Default or secondary)
+    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url):
+        try:
+            plan = compose_refinement_with_ollama(
+                prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
+            )
+            if plan.get("steps"):
+                return plan, f"Ollama ({config.ollama_model}) Pass {loop_iteration}/{total_iterations}"
+        except Exception as e:
+            logger.warning("Ollama refinement composition failed: %s", e)
+
+    # 3. Try OpenAI as secondary if not already tried and keys are present
+    if config.provider != "openai" and (config.openai_api_key or config.openai_base_url):
+        try:
+            plan = compose_refinement_with_openai(
+                prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
+            )
+            if plan.get("steps"):
+                return plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}"
+        except Exception as e:
+            logger.warning("OpenAI refinement composition failed: %s", e)
+
+    # 4. Built-in procedural fallback
+    logger.info("Using built-in procedural refiner fallback for '%s' (style: %s, pass %d/%d)", prompt, style_preset.name, loop_iteration, total_iterations)
+    plan = plan_refinement_fallback(
+        prompt,
+        width,
+        height,
+        detail_level=config.detail_level,
+        style=config.style,
+        current_image=current_image,
+        loop_iteration=loop_iteration,
+        total_iterations=total_iterations,
+        model="built-in",
+    )
+    return plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})"
+
+

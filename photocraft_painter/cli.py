@@ -18,6 +18,7 @@ from photocraft_painter.artist import execute_live_drawing
 from photocraft_painter.composer import (
     parse_prompt_and_images,
     plan_artwork,
+    plan_refinement_artwork,
     validate_image_files,
 )
 from photocraft_painter.config import PainterConfig
@@ -43,11 +44,14 @@ def print_banner(config: PainterConfig) -> None:
         engine_target = config.openai_base_url or "api.openai.com"
 
     style_preset = get_style(config.style)
+    loop_val = getattr(config, "loop", 1)
+    loop_desc = "single pass (no resubmission)" if loop_val == 1 else f"{loop_val - 1} critique & refinement {'pass' if loop_val - 1 == 1 else 'passes'}"
 
     text = (
         f"[bold cyan]PhotoCraft Painter[/] [dim]v{__version__}[/]\n"
         f"[dim]Artistic Style:[/] [bold cyan]{style_preset.name.upper()}[/] [dim]({style_preset.description})[/]\n"
         f"[dim]Detail Level:[/]   [bold yellow]{config.detail_level}/25[/] [dim](~{config.detail_level * 10} brushstrokes across all layers)[/]\n"
+        f"[dim]Refinement Loop:[/] [bold yellow]{loop_val}/5[/] [dim]({loop_desc})[/]\n"
         f"[dim]AI Composer:[/]    [yellow]{engine_name}[/] [dim]at[/] [cyan]{engine_target}[/]\n"
         f"[dim]Bridge Target:[/]  [green]127.0.0.1:{config.control_port}[/]\n"
         f"[dim]Drawing Speed:[/]  [magenta]{config.step_delay}s per step[/]"
@@ -127,10 +131,96 @@ async def draw_prompt(
         config,
         on_step_progress=on_progress,
         on_step_error=on_error,
+        create_canvas=True,
     )
     console.print(
-        f"[bold green]✨ Artwork complete on your PhotoCraft screen![/] "
+        f"[bold green]✓ Initial pass complete![/] "
         f"[dim]({summary['steps_drawn']}/{summary['total_steps']} steps rendered)[/]\n"
+    )
+
+    loop_total = getattr(config, "loop", 1)
+    refinement_passes = max(0, loop_total - 1)
+
+    phase_names = {
+        1: "Phase 1: Complete Occlusion Repair & Solid Base Flats",
+        2: "Phase 2: Volumetric Form Modeling & Waterline Grounding",
+        3: "Phase 3: Facial Features, Anatomy & Dynamic Splashes",
+        4: "Phase 4: Master Vector Inking & Specular Highlights",
+    }
+
+    for loop_i in range(1, refinement_passes + 1):
+        phase_title = phase_names.get(min(loop_i, 4), "Progressive Art Refinement")
+        console.print(
+            f"[bold cyan]─── Refinement Loop Pass {loop_i}/{refinement_passes}: {phase_title} (loop setting: {loop_total}) ───[/]"
+        )
+        canvas_png: Path | None = None
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan]Exporting canvas snapshot for critique...[/]"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task(description="capture", total=None)
+                canvas_png = await client.capture_png()
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn(f"[bold cyan]AI analyzing in-progress image & planning {phase_title} (pass {loop_i}/{refinement_passes})...[/]"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task(description="refine", total=None)
+                refine_plan, refine_source = plan_refinement_artwork(
+                    effective_prompt,
+                    config,
+                    current_image=canvas_png,
+                    loop_iteration=loop_i,
+                    total_iterations=refinement_passes,
+                    width=config.default_width,
+                    height=config.default_height,
+                    images=images,
+                )
+
+            critique = refine_plan.get("critique")
+            if critique:
+                console.print(
+                    Panel(
+                        f"[yellow]{critique}[/]",
+                        title=f"🔍 AI Critique & Problem Analysis (Pass {loop_i})",
+                        border_style="yellow",
+                    )
+                )
+
+            refine_steps = refine_plan.get("steps", [])
+            console.print(
+                f"[bold green]✓[/] Refinement plan ready ({len(refine_steps)} corrective strokes via [cyan]{refine_source}[/])"
+            )
+            console.print(f"[dim]Applying refinement brushstrokes directly to active canvas...[/]")
+
+            refine_summary = await execute_live_drawing(
+                client,
+                refine_plan,
+                config,
+                on_step_progress=on_progress,
+                on_step_error=on_error,
+                create_canvas=False,
+            )
+            console.print(
+                f"[bold green]✓ Refinement pass {loop_i} complete![/] "
+                f"[dim]({refine_summary['steps_drawn']}/{refine_summary['total_steps']} corrective steps rendered)[/]\n"
+            )
+        except Exception as e:
+            console.print(f"[bold yellow]⚠ Refinement pass {loop_i} encountered an error:[/] {e}\n")
+        finally:
+            if canvas_png and canvas_png.exists():
+                try:
+                    canvas_png.unlink()
+                except Exception:
+                    pass
+
+    console.print(
+        f"[bold green]✨ Artwork complete on your PhotoCraft screen![/]\n"
     )
 
 
@@ -138,7 +228,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/loop <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
         "[dim]Tip: Use file:<path> to reference images (e.g. file:/path/to/apple.png make a green apple)[/]\n"
     )
 
@@ -266,6 +356,27 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 console.print(f"[cyan]Current detail level:[/] {config.detail_level}/25 (~{config.detail_level * 10} brushstrokes)\n")
             continue
 
+        if user_input.startswith("/loop"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) > 1:
+                try:
+                    lvl = int(parts[1])
+                    if 1 <= lvl <= 5:
+                        config.loop = lvl
+                        passes = lvl - 1
+                        pass_desc = "single pass (no resubmission)" if passes == 0 else f"{passes} critique & refinement {'pass' if passes == 1 else 'passes'}"
+                        console.print(f"[bold green]✓[/] Refinement loop set to [bold cyan]{config.loop}[/] [dim]({pass_desc})[/]\n")
+                    else:
+                        console.print("[red]Loop setting must be an integer between 1 and 5[/]\n")
+                except ValueError:
+                    console.print("[red]Invalid loop setting (expected integer 1-5)[/]\n")
+            else:
+                passes = config.loop - 1
+                pass_desc = "single pass (no resubmission)" if passes == 0 else f"{passes} critique & refinement {'pass' if passes == 1 else 'passes'}"
+                console.print(f"[cyan]Current loop setting:[/] [bold]{config.loop}[/]/5 [dim]({pass_desc})[/]\n"
+                              f"[dim]Use /loop <1-5> to set (1 = standard single pass; 2-5 = submits rendered PNG back to AI for iterative refinement)[/]\n")
+            continue
+
         if user_input.startswith("/export"):
             parts = user_input.split(maxsplit=1)
             target = parts[1].strip() if len(parts) > 1 else "output.png"
@@ -296,6 +407,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 "  /model            List local & recommended models (https://ollama.com/search) with interactive selection\n"
                 "  /model <name|#>   Switch active AI model on the fly by name or list number\n"
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
+                "  /loop <1-5>       Refinement loop count (1=single pass; 2-5=re-submits PNG snapshot to AI with critique instructions)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
                 "  /speed <sec>      Set live step delay (e.g. 0.05 for fast, 0.2 for slower)\n"
                 "  /help             Display this help guide\n"
@@ -323,6 +435,7 @@ async def async_main(args: argparse.Namespace) -> None:
         step_delay=args.delay,
         style=args.style,
         detail_level=args.detail,
+        loop=args.loop,
         provider=provider,
         ollama_host=args.ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434",
         ollama_model=args.model or os.getenv("OLLAMA_MODEL") or "ornith-1.5:35b",
@@ -397,6 +510,15 @@ def main() -> None:
         choices=range(1, 26),
         metavar="1-25",
         help="Drawing detail level 1 (minimal) to 25 (ultra ~250 brushstrokes, default: 5)",
+    )
+    parser.add_argument(
+        "--loop",
+        "-l",
+        type=int,
+        default=int(os.getenv("PAINTER_LOOP") or "1"),
+        choices=range(1, 6),
+        metavar="1-5",
+        help="Refinement loop count 1 to 5 (default: 1; values 2-5 re-submit rendered canvas PNG back to AI for iterative refinement)",
     )
     parser.add_argument("--launch", action="store_true", help="Automatically launch PhotoCraft if not already running")
     parser.add_argument("--provider", type=str, choices=["ollama", "openai"], default="ollama", help="AI provider (default: ollama)")

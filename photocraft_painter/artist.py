@@ -21,6 +21,7 @@ async def execute_live_drawing(
     config: PainterConfig,
     on_step_progress: Callable[[int, int, str, dict[str, Any]], None] | None = None,
     on_step_error: Callable[[int, int, str, str], None] | None = None,
+    create_canvas: bool = True,
 ) -> dict[str, Any]:
     """Execute drawing plan steps sequentially over MCP with animated delays."""
     width = plan.get("width", config.default_width)
@@ -34,16 +35,21 @@ async def execute_live_drawing(
     plan["title"] = doc_name
     steps: list[dict[str, Any]] = plan.get("steps", [])
 
-    # 1. Create fresh canvas (starts with a raster background layer)
-    await client.doc_new(
-        width=width,
-        height=height,
-        background=bg,
-        name=doc_name,
-    )
-
-    if config.step_delay > 0:
-        await asyncio.sleep(config.step_delay)
+    # 1. Create fresh canvas (only on initial pass)
+    if create_canvas:
+        await client.doc_new(
+            width=width,
+            height=height,
+            background=bg,
+            name=doc_name,
+        )
+        if config.step_delay > 0:
+            await asyncio.sleep(config.step_delay)
+    else:
+        try:
+            await client.new_layer(name=f"Refinement: {raw_title}")
+        except Exception as e:
+            logger.debug("Automatic refinement layer notice: %s", e)
 
     # 2. Sequentially execute drawing steps
     total = len(steps)

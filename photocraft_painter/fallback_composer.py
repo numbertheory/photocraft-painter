@@ -5403,3 +5403,438 @@ def plan_fallback(
 
     # For any other prompt, create an authentic dynamic composition matching the user's specific prompt
     return plan_dynamic_artwork(prompt, width, height, detail_level, style=style, model=model)
+
+
+def plan_refinement_fallback(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "realistic",
+    current_image: Path | None = None,
+    loop_iteration: int = 1,
+    total_iterations: int = 1,
+    model: str = "built-in",
+) -> dict[str, Any]:
+    """Procedurally generate phase-specific targeted additive refinement brushstrokes for feedback loop passes.
+
+    Follows a progressive 4-phase refinement pipeline:
+    - Pass 1: Complete occlusion repair, covering intersecting water/background with solid opaque base color, and unifying silhouette.
+    - Pass 2: Continuous volumetric form modeling (broad smooth shadow sweeps, strictly banning scattered shadow spots) and waterline contact wake.
+    - Pass 3: Crisp focal facial features, anatomy, and dynamic flying water splash particles.
+    - Pass 4: Weighted master vector ink contours and brilliant specular catchlights.
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+
+    lowered = prompt.lower()
+    is_duck = any(k in lowered for k in ["duck", "rubber duck", "bath"])
+
+    # Base palette
+    if style_preset.id == "cubism":
+        ink_color = "#181512"
+        shadow_color = "#2c2118"
+        base_color = "#d4ac0d"
+        highlight_color = "#fefae0"
+    elif style_preset.id == "cartoon":
+        ink_color = "#000000"
+        shadow_color = "#d35400" if is_duck else "#2c3e50"
+        base_color = "#f1c40f" if is_duck else "#f4d03f"
+        highlight_color = "#ffffff"
+    elif style_preset.id == "sketchy":
+        ink_color = "#1c2833"
+        shadow_color = "#2c3e50"
+        base_color = "#f2f4f4"
+        highlight_color = "#fdfefe"
+    elif style_preset.id == "dreamlike":
+        ink_color = "#2e1c4a"
+        shadow_color = "#3a256a"
+        base_color = "#f9e79f" if is_duck else "#d7bde2"
+        highlight_color = "#fff8dc"
+    elif style_preset.id == "abstract":
+        ink_color = "#0e1724"
+        shadow_color = "#1b2631"
+        base_color = "#e67e22" if is_duck else "#3498db"
+        highlight_color = "#00ffff"
+    else:  # realistic & painterly
+        ink_color = "#17120e"
+        shadow_color = "#935116" if is_duck else "#2a1e17"
+        base_color = "#f39c12" if is_duck else "#d5dbdb"
+        highlight_color = "#ffffff"
+
+    phase = min(loop_iteration, 4)
+
+    if phase == 1:
+        # =========================================================================
+        # PHASE 1: COMPLETE OCCLUSION REPAIR & SOLID BASE FLATS
+        # =========================================================================
+        if is_duck:
+            critique = (
+                f"Pass 1/{total_iterations} [Structural Repair]: Fully resolving occlusion errors and unpainted gaps. "
+                "Applying solid opaque yellow base strokes across the torso to erase the intersecting blue water line, "
+                "clearing wireframe scribbles from the head, and establishing a unified watertight silhouette."
+            )
+        else:
+            critique = (
+                f"Pass 1/{total_iterations} [Structural Repair]: Fully repairing occlusion errors and background cuts. "
+                "Applying solid opaque base flats to seal all holes and bleed-through, and unifying outer silhouette boundaries."
+            )
+
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 1. Base Occlusion Repair"}})
+        if is_duck:
+            # Solid opaque yellow patch over body and wing to erase intersecting waterline
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Opaque Yellow Body Patch (Cover Intersecting Water)",
+                    "points": stroke_line(s(270), s(460), s(570), s(460), steps=15),
+                    "size": max(25.0, s(50.0)),
+                    "color": base_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Opaque patch covering chest gap
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Opaque Chest & Belly Flat Fill",
+                    "points": stroke_line(s(310), s(430), s(460), s(430), steps=12),
+                    "size": max(20.0, s(40.0)),
+                    "color": base_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Clean head patch to erase multiple overlapping sketch wireframes
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Opaque Head Flat (Erase Wireframe Scribbles)",
+                    "points": stroke_bezier((s(430), s(280)), (s(490), s(250)), (s(530), s(280)), (s(490), s(340))),
+                    "size": max(25.0, s(45.0)),
+                    "color": base_color,
+                    "hardness": 1.0,
+                    "opacity": 0.95,
+                },
+            })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Opaque Base Surface Reinforcement",
+                    "points": stroke_line(s(300), s(400), s(500), s(400), steps=12),
+                    "size": max(25.0, s(45.0)),
+                    "color": base_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+
+        # Unified outer silhouette boundary
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Watertight Outer Boundary"}})
+        if is_duck:
+            duck_body_contour = stroke_bezier((s(250), s(410)), (s(300), s(550)), (s(550), s(550)), (s(590), s(420)))
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Clean Lower Body Boundary Contour",
+                    "points": duck_body_contour,
+                    "size": 4.8 if style_preset.id == "cartoon" else 3.8,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Waterline Base Contact Foam",
+                    "points": stroke_line(s(240), s(540), s(580), s(540), steps=16, wobble=0.1),
+                    "size": max(3.0, s(5.5)),
+                    "color": "#ffffff",
+                    "hardness": 0.95,
+                    "opacity": 0.95,
+                },
+            })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Unified Perimeter Contour",
+                    "points": stroke_line(s(280), s(480), s(520), s(480), steps=10),
+                    "size": 4.0,
+                    "color": ink_color,
+                    "hardness": 0.95,
+                    "opacity": 1.0,
+                },
+            })
+
+    elif phase == 2:
+        # =========================================================================
+        # PHASE 2: VOLUMETRIC FORM MODELING & WATERLINE GROUNDING (NO SHADOW SPOTS!)
+        # =========================================================================
+        if is_duck:
+            critique = (
+                f"Pass 2/{total_iterations} [Form Modeling & Waterline Grounding]: Applying one smooth, continuous "
+                "cel shadow crescent along the underside belly (strictly avoiding noisy shadow spots or speckles). "
+                "Establishing clean wing shading and positioning foam wake ripples along the water contact boundary."
+            )
+        else:
+            critique = (
+                f"Pass 2/{total_iterations} [Form Modeling]: Adding unified continuous form shadow planes along the "
+                "underside volume (no scattered dash marks), and defining clean ground contact anchors."
+            )
+
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 1. Continuous Form Shadow (No Spots)"}})
+        if is_duck:
+            # ONE continuous sweeping underside crescent shadow along the belly curve (STRICTLY NO SCATTERED DASH MARKS!)
+            belly_shadow = stroke_bezier((s(270), s(490)), (s(380), s(545)), (s(490), s(545)), (s(580), s(470)))
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Underside Continuous Form Shadow Crescent",
+                    "points": belly_shadow,
+                    "size": max(14.0, s(28.0)),
+                    "color": shadow_color,
+                    "hardness": 0.85 if style_preset.id == "cartoon" else 0.7,
+                    "opacity": 0.85,
+                },
+            })
+            # Wing underside shadow sweep
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Wing Underside Shadow Plane",
+                    "points": stroke_line(s(370), s(480), s(490), s(480), steps=10),
+                    "size": max(8.0, s(16.0)),
+                    "color": shadow_color,
+                    "hardness": 0.85 if style_preset.id == "cartoon" else 0.75,
+                    "opacity": 0.8,
+                },
+            })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Continuous Form Shadow Sweep",
+                    "points": stroke_bezier((s(280), s(480)), (s(360), s(520)), (s(440), s(520)), (s(520), s(480))),
+                    "size": max(12.0, s(24.0)),
+                    "color": shadow_color,
+                    "hardness": 0.85 if style_preset.id == "cartoon" else 0.7,
+                    "opacity": 0.85,
+                },
+            })
+
+        # Waterline Contact Wake
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Waterline Wake & Ground Contact"}})
+        if is_duck:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Contact Water Foam Ribbon",
+                    "points": stroke_bezier((s(230), s(550)), (s(340), s(575)), (s(460), s(575)), (s(570), s(550))),
+                    "size": max(3.5, s(6.0)),
+                    "color": "#ffffff",
+                    "hardness": 0.95,
+                    "opacity": 0.95,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Water Surface Reflection Tint",
+                    "points": stroke_line(s(320), s(580), s(480), s(580), steps=12),
+                    "size": max(8.0, s(18.0)),
+                    "color": "#f39c12",
+                    "hardness": 0.5,
+                    "opacity": 0.45,
+                },
+            })
+
+    elif phase == 3:
+        # =========================================================================
+        # PHASE 3: FACIAL FEATURES, ANATOMY & DYNAMIC SPLASHES
+        # =========================================================================
+        if is_duck:
+            critique = (
+                f"Pass 3/{total_iterations} [Anatomy & Dynamic Splashes]: Defining crisp facial features: clean circular eye, "
+                "dark pupil with white catchlight, and smiling bill parting line. Painting dynamic water droplets and splash "
+                "arcs radiating outward from the contact wake."
+            )
+        else:
+            critique = (
+                f"Pass 3/{total_iterations} [Anatomy & Features]: Defining crisp focal anatomy and environmental particles."
+            )
+
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 1. Focal Features & Bill Anatomy"}})
+        if is_duck:
+            # Clean eye circle, pupil, and white shine dot
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Eye Outer Rim Contour",
+                    "points": stroke_enclosed_oval(s(505), s(305), s(20), s(22)),
+                    "size": 3.6,
+                    "color": "#000000",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Eye Dark Pupil",
+                    "points": [[s(506), s(305), 1.0], [s(507), s(306), 1.0]],
+                    "size": max(10.0, s(16.0)),
+                    "color": "#111111",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Eye White Catchlight Dot",
+                    "points": [[s(502), s(300), 1.0], [s(503), s(301), 1.0]],
+                    "size": max(3.5, s(5.5)),
+                    "color": "#ffffff",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Bill smiling parting line
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Bill Center Smile Division",
+                    "points": stroke_bezier((s(540), s(335)), (s(565), s(340)), (s(595), s(340)), (s(620), s(330))),
+                    "size": 3.5,
+                    "color": "#111111",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+
+            # Dynamic Flying Splash Droplets
+            steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Dynamic Flying Water Splashes"}})
+            droplet_coords = [
+                (s(180), s(490)), (s(210), s(460)), (s(230), s(520)),
+                (s(590), s(510)), (s(620), s(470)), (s(640), s(520)),
+            ]
+            for idx, (dx, dy) in enumerate(droplet_coords, start=1):
+                steps.append({
+                    "cmd": "paint.stroke",
+                    "params": {
+                        "name": f"Refinement: Water Splash Droplet {idx}",
+                        "points": [[dx, dy, 1.0], [dx + s(1), dy + s(1), 1.0]],
+                        "size": max(3.0, s(5.0 + (idx % 3) * 1.5)),
+                        "color": "#e0f7fa" if idx % 2 == 0 else "#ffffff",
+                        "hardness": 1.0,
+                        "opacity": 0.95,
+                    },
+                })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Focal Accent Line",
+                    "points": stroke_line(s(360), s(320), s(440), s(320)),
+                    "size": 3.5,
+                    "color": ink_color,
+                    "hardness": 0.95,
+                    "opacity": 1.0,
+                },
+            })
+
+    else:
+        # =========================================================================
+        # PHASE 4: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING
+        # =========================================================================
+        critique = (
+            f"Pass {loop_iteration}/{total_iterations} [Master Inking & Specular Lighting]: Tracing weighted master vector ink "
+            "contours for maximum graphic punch and silhouette clarity, and placing brilliant specular gleams on head and water."
+        )
+
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 1. Master Vector Contours"}})
+        if is_duck:
+            # Weighted outer ink outline
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Head & Bill Contour",
+                    "points": stroke_bezier((s(430), s(240)), (s(510), s(220)), (s(550), s(270)), (s(610), s(330))),
+                    "size": 5.2,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Wing Ink Contour",
+                    "points": stroke_bezier((s(350), s(450)), (s(420), s(430)), (s(510), s(460)), (s(450), s(520))),
+                    "size": 4.5,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Outer Contour",
+                    "points": stroke_line(s(280), s(450), s(520), s(450)),
+                    "size": 5.0,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+
+        steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Brilliant Specular Gleams"}})
+        gleams = [
+            (s(460), s(240), "Head Crest Specular Gleam"),
+            (s(560), s(315), "Bill Bridge Specular Glint"),
+            (s(380), s(440), "Wing Highlight Arc"),
+        ]
+        for gx, gy, gname in gleams:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Refinement: {gname}",
+                    "points": stroke_line(gx, gy, gx + s(14), gy + s(4), steps=6),
+                    "size": 3.6,
+                    "color": highlight_color,
+                    "hardness": 1.0,
+                    "opacity": 0.95,
+                },
+            })
+
+    title = format_document_title(
+        f"{prompt.title()} Refine {loop_iteration}",
+        style=style,
+        detail_level=detail,
+        model=model,
+    )
+
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+        "critique": critique,
+        "is_refinement": True,
+    }
+
