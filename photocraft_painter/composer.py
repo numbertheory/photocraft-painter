@@ -138,7 +138,8 @@ When coloring in regions (such as a character's body, face, head, ears, clothing
 Instead:
 - First, draw a completely enclosed bounding outline with `paint.stroke` (e.g. a closed polygon or contour where the start and end points connect: points[0] == points[-1], size >= 4.0, hardness >= 0.9).
   WARNING: The bounding contour MUST be completely enclosed without any gaps, pinholes, or openings, otherwise the paint bucket will leak across the entire canvas!
-- Immediately follow with `paint.bucket` using a seed point (x, y) situated well inside the center of that enclosed area, with "sampleAllLayers": true.
+- Immediately follow with `paint.bucket` on the SAME layer using a seed point (x, y) situated well inside the center of that enclosed area, with "sampleAllLayers": true.
+- Organize distinct subjects and elements onto separate layers with `layer.new.layer` (e.g. background shapes first, character base next, details on top). Each layer is isolated during drawing (prior background layers are kept hidden) so background shapes will NEVER divide, cut through, or segment your paint bucket fills. Once drawing finishes, all layers are restored to visible simultaneously for the final artwork.
 - After filling the clean solid flats, proceed to shading, highlights, and painterly details.
 
 Canvas size is 800x800 pixels. Generate expressive steps according to the requested detail level.

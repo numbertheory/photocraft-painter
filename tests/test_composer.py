@@ -1452,6 +1452,181 @@ def test_plan_refinement_fallback_progressive_phases_and_no_dash_clusters():
     assert any("Ink" in n or "Highlight" in n for n in step_names_4)
 
 
+@pytest.mark.anyio
+async def test_execute_live_drawing_isolates_background_layers_and_restores_all():
+    from photocraft_painter.artist import execute_live_drawing
+
+    commands_log: list[tuple[str, dict[str, Any]]] = []
+    layer_visibility: dict[int, bool] = {1: True}
+    next_layer_id = 2
+
+    class LayerMockClient:
+        async def doc_new(self, width, height, background, name, **kwargs):
+            commands_log.append(("doc_new", {"name": name}))
+            return {"document_id": "doc_1"}
+
+        async def doc_inspect(self):
+            return {
+                "layers": [{"id": lid, "visible": layer_visibility[lid]} for lid in layer_visibility]
+            }
+
+        async def command_run(self, cmd_id, params=None, wait=True):
+            nonlocal next_layer_id
+            params = params or {}
+            commands_log.append((cmd_id, params))
+
+            if cmd_id == "layer.new.layer":
+                lid = next_layer_id
+                next_layer_id += 1
+                layer_visibility[lid] = True
+                return {"layer": lid}
+            elif cmd_id == "layer.setProps":
+                lid = params.get("layer")
+                if lid is not None and "visible" in params:
+                    layer_visibility[lid] = params["visible"]
+                return {"status": "ok"}
+            return {"status": "ok"}
+
+        async def new_layer(self, name):
+            return await self.command_run("layer.new.layer", {"name": name})
+
+    client = LayerMockClient()
+    plan = {
+        "title": "Jigglypuff Cel",
+        "style": "cartoon",
+        "detail_level": 5,
+        "model": "kimi-k3-cloud",
+        "width": 800,
+        "height": 800,
+        "steps": [
+            # Layer 2: Background Starburst Shapes
+            {"cmd": "layer.new.layer", "params": {"name": "1. Background Starburst"}},
+            {"cmd": "paint.stroke", "params": {"name": "Starburst Ray 1", "points": [[400, 400], [800, 200]]}},
+            # Layer 3: Character Body (Enclosed contour + Paint Bucket)
+            {"cmd": "layer.new.layer", "params": {"name": "2. Jigglypuff Body"}},
+            {"cmd": "paint.stroke", "params": {"name": "Body Contour", "points": [[300, 300], [500, 300], [500, 500], [300, 500], [300, 300]]}},
+            {"cmd": "paint.bucket", "params": {"name": "Body Pink Fill", "x": 400, "y": 400, "color": "#ffc0cb", "sampleAllLayers": True}},
+            # Layer 4: Face Details
+            {"cmd": "layer.new.layer", "params": {"name": "3. Face Details"}},
+            {"cmd": "paint.stroke", "params": {"name": "Eye Outline", "points": [[350, 380], [370, 380]]}},
+        ],
+    }
+
+    config = PainterConfig(step_delay=0)
+    summary = await execute_live_drawing(client, plan, config, create_canvas=True)
+    assert summary["steps_drawn"] == len(plan["steps"])
+
+    # 1. Verify that while Layer 2 was being drawn, Layer 1 was set invisible:
+    # 2. Verify that while Layer 3 was being drawn, Layers 1 and 2 were set invisible:
+    hide_calls = [
+        p for (cmd, p) in commands_log
+        if cmd == "layer.setProps" and p.get("visible") is False
+    ]
+    # Layer 1 must have been hidden
+    assert any(p.get("layer") == 1 for p in hide_calls)
+    # Layer 2 must have been hidden when Layer 3 started
+    assert any(p.get("layer") == 2 for p in hide_calls)
+
+    # 3. Verify that in the end, ALL layers (1, 2, 3, 4) are restored to visible=True
+    assert layer_visibility[1] is True
+    assert layer_visibility[2] is True
+    assert layer_visibility[3] is True
+    assert layer_visibility[4] is True
+
+    # Check that layer.setProps with visible=True was called for all layers
+    restore_calls = [
+        p for (cmd, p) in commands_log
+        if cmd == "layer.setProps" and p.get("visible") is True
+    ]
+    restored_layers = {p.get("layer") for p in restore_calls}
+    assert {1, 2, 3, 4}.issubset(restored_layers)
+
+
+@pytest.mark.anyio
+async def test_execute_live_drawing_restores_layers_on_error():
+    from photocraft_painter.artist import execute_live_drawing
+
+    layer_visibility: dict[int, bool] = {1: True}
+    next_layer_id = 2
+
+    class FailingClient:
+        async def doc_new(self, width, height, background, name, **kwargs):
+            return {"document_id": "doc_1"}
+
+        async def doc_inspect(self):
+            return {
+                "layers": [{"id": lid, "visible": layer_visibility[lid]} for lid in layer_visibility]
+            }
+
+        async def command_run(self, cmd_id, params=None, wait=True):
+            nonlocal next_layer_id
+            params = params or {}
+            if cmd_id == "layer.new.layer":
+                lid = next_layer_id
+                next_layer_id += 1
+                layer_visibility[lid] = True
+                return {"layer": lid}
+            elif cmd_id == "layer.setProps":
+                lid = params.get("layer")
+                if lid is not None and "visible" in params:
+                    layer_visibility[lid] = params["visible"]
+                return {"status": "ok"}
+            elif cmd_id == "paint.bucket":
+                raise RuntimeError("Simulated mid-drawing error")
+            return {"status": "ok"}
+
+        async def new_layer(self, name):
+            return await self.command_run("layer.new.layer", {"name": name})
+
+    client = FailingClient()
+    plan = {
+        "title": "Error Recovery",
+        "style": "cartoon",
+        "detail_level": 3,
+        "model": "kimi-k3-cloud",
+        "width": 800,
+        "height": 800,
+        "steps": [
+            {"cmd": "layer.new.layer", "params": {"name": "Layer 2"}},
+            {"cmd": "paint.bucket", "params": {"name": "Failing Bucket", "x": 100, "y": 100}},
+        ],
+    }
+
+    config = PainterConfig(step_delay=0)
+    await execute_live_drawing(client, plan, config, create_canvas=True)
+
+    # Even with an error during paint.bucket, both layers must be restored to visible
+    assert layer_visibility[1] is True
+    assert layer_visibility[2] is True
+
+
+@pytest.mark.anyio
+async def test_mcp_client_layer_visibility_and_inspection():
+    from unittest.mock import MagicMock
+    from photocraft_painter.mcp_client import PhotocraftMcpClient
+
+    mock_raw = MagicMock()
+    client = PhotocraftMcpClient(mock_raw)
+
+    async def mock_call(name, args=None):
+        if name == "doc_inspect":
+            return {"layers": [{"id": 1, "visible": True}, {"id": 2, "visible": False}]}
+        elif name == "command_run":
+            return {"status": "ok", "params": args}
+        return {"status": "ok"}
+
+    client.call_tool = MagicMock(side_effect=mock_call)
+
+    # Test doc_inspect
+    insp = await client.doc_inspect()
+    assert len(insp["layers"]) == 2
+
+    # Test set_layer_visible
+    await client.set_layer_visible(layer_id=2, visible=True)
+    assert any(c.args[0] == "command_run" and c.args[1]["id"] == "layer.setProps" for c in client.call_tool.call_args_list)
+
+
+
 
 
 

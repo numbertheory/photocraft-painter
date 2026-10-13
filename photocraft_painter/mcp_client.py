@@ -218,6 +218,37 @@ class PhotocraftMcpClient:
         """Add a new raster layer."""
         return await self.command_run("layer.new.layer", {"name": name})
 
+    async def doc_inspect(self) -> dict[str, Any]:
+        """Inspect active document state and layer tree."""
+        try:
+            res = await self.call_tool("doc_inspect", {})
+            if isinstance(res, dict):
+                return res
+            if isinstance(res, str):
+                return json.loads(res)
+            return {}
+        except Exception:
+            try:
+                res = await self.command_run("document.inspect", {})
+                if isinstance(res, dict):
+                    return res
+                if isinstance(res, str):
+                    return json.loads(res)
+                return {}
+            except Exception:
+                return {}
+
+    async def set_layer_props(self, layer_id: int | None = None, **props: Any) -> Any:
+        """Set layer properties (e.g. visibility, opacity)."""
+        params: dict[str, Any] = dict(props)
+        if layer_id is not None:
+            params["layer"] = layer_id
+        return await self.command_run("layer.setProps", params)
+
+    async def set_layer_visible(self, layer_id: int | None = None, visible: bool = True) -> Any:
+        """Set layer visibility."""
+        return await self.set_layer_props(layer_id=layer_id, visible=visible)
+
     async def fill_bucket(self, x: float, y: float, color: str) -> Any:
         """Fill an area using the Paint Bucket tool."""
         return await self.command_run(
