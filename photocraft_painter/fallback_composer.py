@@ -5435,9 +5435,15 @@ def plan_refinement_fallback(
 
     lowered = prompt.lower()
     is_duck = any(k in lowered for k in ["duck", "rubber duck", "bath"])
+    is_moose = any(k in lowered for k in ["moose", "deer", "stag", "elk", "reindeer", "caribou", "buck"])
 
     # Base palette
-    if style_preset.id == "cubism":
+    if is_moose:
+        ink_color = "#111111"
+        shadow_color = "#3e2723"
+        base_color = "#795548"
+        highlight_color = "#ffffff"
+    elif style_preset.id == "cubism":
         ink_color = "#181512"
         shadow_color = "#2c2118"
         base_color = "#d4ac0d"
@@ -5445,7 +5451,7 @@ def plan_refinement_fallback(
     elif style_preset.id == "cartoon":
         ink_color = "#000000"
         shadow_color = "#d35400" if is_duck else "#2c3e50"
-        base_color = "#f1c40f" if is_duck else "#f4d03f"
+        base_color = "#f1c40f" if is_duck else "#ecf0f1"
         highlight_color = "#ffffff"
     elif style_preset.id == "sketchy":
         ink_color = "#1c2833"
@@ -5479,6 +5485,11 @@ def plan_refinement_fallback(
                 f"Pass 1/{total_iterations} [Structural Repair]: Fully resolving occlusion errors and unpainted gaps. "
                 "Applying solid opaque yellow base strokes across the torso to erase the intersecting blue water line, "
                 "clearing wireframe scribbles from the head, and establishing a unified watertight silhouette."
+            )
+        elif is_moose:
+            critique = (
+                f"Pass 1/{total_iterations} [Flesh Out Forgotten Shapes]: Filling in the unpainted hollow ear wireframes "
+                "with matching tan base color, grounding the hooves, and adding nostrils—strictly leaving already solid body areas untouched."
             )
         else:
             critique = (
@@ -5524,16 +5535,109 @@ def plan_refinement_fallback(
                     "opacity": 0.95,
                 },
             })
+        elif is_moose:
+            # Fill hollow left ear wireframe
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Fill Hollow Left Ear (Tan Base Flat)",
+                    "points": stroke_bezier((s(205), s(260)), (s(220), s(235)), (s(235), s(245)), (s(225), s(270))),
+                    "size": max(12.0, s(22.0)),
+                    "color": "#bcaaa4",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Ear Core Flat",
+                    "points": [[s(220), s(255), 1.0], [s(222), s(253), 1.0]],
+                    "size": max(14.0, s(24.0)),
+                    "color": "#bcaaa4",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Fill hollow right ear wireframe
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Fill Hollow Right Ear (Tan Base Flat)",
+                    "points": stroke_bezier((s(325), s(270)), (s(335), s(245)), (s(355), s(235)), (s(360), s(260))),
+                    "size": max(12.0, s(22.0)),
+                    "color": "#bcaaa4",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Ear Core Flat",
+                    "points": [[s(340), s(255), 1.0], [s(342), s(253), 1.0]],
+                    "size": max(14.0, s(24.0)),
+                    "color": "#bcaaa4",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Snout nostrils
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Snout Nostril",
+                    "points": [[s(265), s(395), 1.0], [s(268), s(398), 1.0]],
+                    "size": max(4.0, s(7.0)),
+                    "color": "#3e2723",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Snout Nostril",
+                    "points": [[s(295), s(395), 1.0], [s(298), s(398), 1.0]],
+                    "size": max(4.0, s(7.0)),
+                    "color": "#3e2723",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Solid hoof base fills
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Front Hoof Solid Base",
+                    "points": stroke_line(s(310), s(675), s(345), s(675), steps=4),
+                    "size": max(8.0, s(14.0)),
+                    "color": "#212121",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Rear Hoof Solid Base",
+                    "points": stroke_line(s(535), s(675), s(570), s(675), steps=4),
+                    "size": max(8.0, s(14.0)),
+                    "color": "#212121",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
         else:
             steps.append({
                 "cmd": "paint.stroke",
                 "params": {
-                    "name": "Refinement: Opaque Base Surface Reinforcement",
-                    "points": stroke_line(s(300), s(400), s(500), s(400), steps=12),
-                    "size": max(25.0, s(45.0)),
-                    "color": base_color,
-                    "hardness": 1.0,
-                    "opacity": 1.0,
+                    "name": "Refinement: Outer Silhouette Boundary Accent",
+                    "points": stroke_sketch_oval(s(400), s(400), s(170), s(150), passes=1.0),
+                    "size": 3.8,
+                    "color": ink_color,
+                    "hardness": 0.95,
+                    "opacity": 0.9,
                 },
             })
 
@@ -5563,13 +5667,36 @@ def plan_refinement_fallback(
                     "opacity": 0.95,
                 },
             })
+        elif is_moose:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Ear Outer Ink Boundary",
+                    "points": stroke_bezier((s(200), s(260)), (s(215), s(235)), (s(238), s(245)), (s(225), s(272))),
+                    "size": 4.0,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Ear Outer Ink Boundary",
+                    "points": stroke_bezier((s(325), s(272)), (s(338), s(245)), (s(360), s(235)), (s(365), s(260))),
+                    "size": 4.0,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
         else:
             steps.append({
                 "cmd": "paint.stroke",
                 "params": {
                     "name": "Refinement: Unified Perimeter Contour",
-                    "points": stroke_line(s(280), s(480), s(520), s(480), steps=10),
-                    "size": 4.0,
+                    "points": stroke_line(s(300), s(540), s(500), s(540), steps=8),
+                    "size": 3.8,
                     "color": ink_color,
                     "hardness": 0.95,
                     "opacity": 1.0,
@@ -5585,6 +5712,11 @@ def plan_refinement_fallback(
                 f"Pass 2/{total_iterations} [Form Modeling & Waterline Grounding]: Applying one smooth, continuous "
                 "cel shadow crescent along the underside belly (strictly avoiding noisy shadow spots or speckles). "
                 "Establishing clean wing shading and positioning foam wake ripples along the water contact boundary."
+            )
+        elif is_moose:
+            critique = (
+                f"Pass 2/{total_iterations} [Form Modeling & Ground Anchoring]: Adding a smooth continuous form shadow "
+                "along the underside belly (no scattered spots), and defining ground cast shadow anchors under the hooves."
             )
         else:
             critique = (
@@ -5619,20 +5751,44 @@ def plan_refinement_fallback(
                     "opacity": 0.8,
                 },
             })
+        elif is_moose:
+            # Continuous lower belly form shadow along the natural bottom edge of the moose
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Underside Continuous Form Shadow Crescent",
+                    "points": stroke_bezier((s(320), s(540)), (s(420), s(560)), (s(510), s(555)), (s(590), s(525))),
+                    "size": max(10.0, s(18.0)),
+                    "color": shadow_color,
+                    "hardness": 0.85 if style_preset.id == "cartoon" else 0.7,
+                    "opacity": 0.75,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Neck Underside Form Shadow",
+                    "points": stroke_bezier((s(265), s(430)), (s(280), s(460)), (s(300), s(480)), (s(320), s(460))),
+                    "size": max(8.0, s(14.0)),
+                    "color": shadow_color,
+                    "hardness": 0.85 if style_preset.id == "cartoon" else 0.7,
+                    "opacity": 0.7,
+                },
+            })
         else:
             steps.append({
                 "cmd": "paint.stroke",
                 "params": {
                     "name": "Refinement: Continuous Form Shadow Sweep",
-                    "points": stroke_bezier((s(280), s(480)), (s(360), s(520)), (s(440), s(520)), (s(520), s(480))),
-                    "size": max(12.0, s(24.0)),
+                    "points": stroke_line(s(320), s(540), s(480), s(540), steps=8),
+                    "size": max(8.0, s(16.0)),
                     "color": shadow_color,
                     "hardness": 0.85 if style_preset.id == "cartoon" else 0.7,
-                    "opacity": 0.85,
+                    "opacity": 0.65,
                 },
             })
 
-        # Waterline Contact Wake
+        # Ground / Waterline contact
         steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Waterline Wake & Ground Contact"}})
         if is_duck:
             steps.append({
@@ -5657,6 +5813,41 @@ def plan_refinement_fallback(
                     "opacity": 0.45,
                 },
             })
+        elif is_moose:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Front Hoof Ground Cast Shadow",
+                    "points": stroke_sketch_oval(s(328), s(686), s(35), s(10), passes=1.0),
+                    "size": max(6.0, s(12.0)),
+                    "color": "#2e7d32",
+                    "hardness": 0.85,
+                    "opacity": 0.75,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Rear Hoof Ground Cast Shadow",
+                    "points": stroke_sketch_oval(s(552), s(686), s(35), s(10), passes=1.0),
+                    "size": max(6.0, s(12.0)),
+                    "color": "#2e7d32",
+                    "hardness": 0.85,
+                    "opacity": 0.75,
+                },
+            })
+        else:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Ground Contact Anchor",
+                    "points": stroke_line(s(300), s(560), s(500), s(560), steps=8),
+                    "size": 3.5,
+                    "color": shadow_color,
+                    "hardness": 0.75,
+                    "opacity": 0.6,
+                },
+            })
 
     elif phase == 3:
         # =========================================================================
@@ -5667,6 +5858,11 @@ def plan_refinement_fallback(
                 f"Pass 3/{total_iterations} [Anatomy & Dynamic Splashes]: Defining crisp facial features: clean circular eye, "
                 "dark pupil with white catchlight, and smiling bill parting line. Painting dynamic water droplets and splash "
                 "arcs radiating outward from the contact wake."
+            )
+        elif is_moose:
+            critique = (
+                f"Pass 3/{total_iterations} [Facial Features & Fine Anatomy]: Defining crisp facial anatomy: eye pupils with "
+                "specular white catchlights, smiling snout division line, inner ear depth creases, and chin bell tuft."
             )
         else:
             critique = (
@@ -5740,6 +5936,111 @@ def plan_refinement_fallback(
                         "opacity": 0.95,
                     },
                 })
+        elif is_moose:
+            # Left eye pupil & catchlight
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Eye Dark Pupil",
+                    "points": [[s(255), s(335), 1.0], [s(256), s(336), 1.0]],
+                    "size": max(7.0, s(10.0)),
+                    "color": "#111111",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Eye White Catchlight Dot",
+                    "points": [[s(253), s(333), 1.0], [s(254), s(334), 1.0]],
+                    "size": max(2.5, s(3.5)),
+                    "color": "#ffffff",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Right eye pupil & catchlight
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Eye Dark Pupil",
+                    "points": [[s(315), s(335), 1.0], [s(316), s(336), 1.0]],
+                    "size": max(7.0, s(10.0)),
+                    "color": "#111111",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Eye White Catchlight Dot",
+                    "points": [[s(313), s(333), 1.0], [s(314), s(334), 1.0]],
+                    "size": max(2.5, s(3.5)),
+                    "color": "#ffffff",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Snout smile parting line
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Snout Smile Division Line",
+                    "points": stroke_bezier((s(255), s(420)), (s(280), s(428)), (s(300), s(428)), (s(325), s(418))),
+                    "size": 3.5,
+                    "color": "#3e2723",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            # Inner ear crease lines
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Left Inner Ear Crease Line",
+                    "points": stroke_line(s(212), s(255), s(230), s(250)),
+                    "size": 3.0,
+                    "color": "#5d4037",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Right Inner Ear Crease Line",
+                    "points": stroke_line(s(335), s(252), s(352), s(250)),
+                    "size": 3.0,
+                    "color": "#5d4037",
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Secondary Anatomy & Fur Accents"}})
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Chin Dewlap Bell Tuft",
+                    "points": stroke_bezier((s(265), s(435)), (s(270), s(460)), (s(275), s(465)), (s(280), s(440))),
+                    "size": 3.8,
+                    "color": "#3e2723",
+                    "hardness": 1.0,
+                    "opacity": 0.9,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Antler Underside Ridge Shadow",
+                    "points": stroke_line(s(230), s(220), s(160), s(180), steps=6),
+                    "size": 4.0,
+                    "color": "#8d6e63",
+                    "hardness": 0.8,
+                    "opacity": 0.7,
+                },
+            })
         else:
             steps.append({
                 "cmd": "paint.stroke",
@@ -5757,10 +6058,16 @@ def plan_refinement_fallback(
         # =========================================================================
         # PHASE 4: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING
         # =========================================================================
-        critique = (
-            f"Pass {loop_iteration}/{total_iterations} [Master Inking & Specular Lighting]: Tracing weighted master vector ink "
-            "contours for maximum graphic punch and silhouette clarity, and placing brilliant specular gleams on head and water."
-        )
+        if is_moose:
+            critique = (
+                f"Pass {loop_iteration}/{total_iterations} [Master Inking & Specular Lighting]: Tracing weighted master ink contours "
+                "along the antlers, head, and hooves, and placing brilliant white specular catchlights on antler tips and snout bridge."
+            )
+        else:
+            critique = (
+                f"Pass {loop_iteration}/{total_iterations} [Master Inking & Specular Lighting]: Tracing weighted master vector ink "
+                "contours for maximum graphic punch and silhouette clarity, and placing brilliant specular gleams on head and water."
+            )
 
         steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 1. Master Vector Contours"}})
         if is_duck:
@@ -5787,6 +6094,40 @@ def plan_refinement_fallback(
                     "opacity": 1.0,
                 },
             })
+        elif is_moose:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Left Antler Contour",
+                    "points": stroke_bezier((s(140), s(130)), (s(200), s(170)), (s(240), s(230)), (s(250), s(260))),
+                    "size": 4.8,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Right Antler Contour",
+                    "points": stroke_bezier((s(410), s(120)), (s(360), s(170)), (s(330), s(230)), (s(325), s(260))),
+                    "size": 4.8,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Refinement: Master Head & Muzzle Contour",
+                    "points": stroke_bezier((s(240), s(280)), (s(250), s(420)), (s(330), s(420)), (s(340), s(280))),
+                    "size": 4.5,
+                    "color": ink_color,
+                    "hardness": 1.0,
+                    "opacity": 1.0,
+                },
+            })
         else:
             steps.append({
                 "cmd": "paint.stroke",
@@ -5801,11 +6142,24 @@ def plan_refinement_fallback(
             })
 
         steps.append({"cmd": "layer.new.layer", "params": {"name": f"Refinement {loop_iteration}: 2. Brilliant Specular Gleams"}})
-        gleams = [
-            (s(460), s(240), "Head Crest Specular Gleam"),
-            (s(560), s(315), "Bill Bridge Specular Glint"),
-            (s(380), s(440), "Wing Highlight Arc"),
-        ]
+        if is_moose:
+            gleams = [
+                (s(150), s(130), "Left Antler Tip Specular Glint"),
+                (s(420), s(125), "Right Antler Tip Specular Glint"),
+                (s(280), s(365), "Snout Bridge Specular Gloss"),
+                (s(440), s(410), "Back Spine Specular Accent"),
+            ]
+        elif is_duck:
+            gleams = [
+                (s(460), s(240), "Head Crest Specular Gleam"),
+                (s(560), s(315), "Bill Bridge Specular Glint"),
+                (s(380), s(440), "Wing Highlight Arc"),
+            ]
+        else:
+            gleams = [
+                (s(400), s(300), "Focal Specular Gleam"),
+                (s(460), s(340), "Secondary Specular Glint"),
+            ]
         for gx, gy, gname in gleams:
             steps.append({
                 "cmd": "paint.stroke",

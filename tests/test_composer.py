@@ -1626,6 +1626,74 @@ async def test_mcp_client_layer_visibility_and_inspection():
     assert any(c.args[0] == "command_run" and c.args[1]["id"] == "layer.setProps" for c in client.call_tool.call_args_list)
 
 
+def test_plan_refinement_fallback_moose_fills_hollow_ears_and_avoids_yellow_body_blob():
+    """Verify that cartoon moose refinement fills hollow ears in tan, adds nostrils, and never generates yellow body blobs."""
+    from photocraft_painter.fallback_composer import plan_refinement_fallback
+
+    # Pass 1: Fills hollow ears and secondary anatomy, NO yellow body bar
+    p1 = plan_refinement_fallback("Cartoon Moose Full Body", style="cartoon", loop_iteration=1, total_iterations=4)
+    step_names = [s.get("params", {}).get("name", "") for s in p1["steps"]]
+    step_colors = [s.get("params", {}).get("color", "") for s in p1["steps"]]
+
+    # Hollow ears must be filled
+    assert any("Fill Hollow Left Ear" in n for n in step_names)
+    assert any("Fill Hollow Right Ear" in n for n in step_names)
+    # Ear fill color must be tan #bcaaa4
+    assert "#bcaaa4" in step_colors
+    # Nostrils and hoof bases must be present
+    assert any("Nostril" in n for n in step_names)
+    assert any("Hoof" in n for n in step_names)
+
+    # Strictly NO yellow body blobs or bars across the body
+    for step in p1["steps"]:
+        params = step.get("params", {})
+        color = params.get("color", "")
+        name = params.get("name", "")
+        # No yellow strokes on the moose
+        assert color not in ("#f4d03f", "#f1c40f", "#ffff00"), f"Unexpected yellow color {color} in step {name}"
+        # No wide stroke across y=400 on the body
+        points = params.get("points", [])
+        if len(points) > 2 and params.get("size", 0) >= 30:
+            ys = [pt[1] for pt in points if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+            assert not (min(ys) <= 410 and max(ys) >= 390 and min([pt[0] for pt in points]) <= 320 and max([pt[0] for pt in points]) >= 480)
+
+    # Pass 2: Eye pupils, catchlights, smile division, and ground cast shadows under hooves
+    p2 = plan_refinement_fallback("Cartoon Moose Full Body", style="cartoon", loop_iteration=2, total_iterations=4)
+    p2_names = [s.get("params", {}).get("name", "") for s in p2["steps"]]
+    p2_colors = [s.get("params", {}).get("color", "") for s in p2["steps"]]
+    assert any("Underside Continuous Form Shadow" in n for n in p2_names)
+    assert any("Cast Shadow" in n for n in p2_names)
+    # Cast shadow on grass is green
+    assert "#2e7d32" in p2_colors
+
+    # Pass 3: Eye pupils & catchlights, snout smile line, inner ear crease lines
+    p3 = plan_refinement_fallback("Cartoon Moose Full Body", style="cartoon", loop_iteration=3, total_iterations=4)
+    p3_names = [s.get("params", {}).get("name", "") for s in p3["steps"]]
+    assert any("Pupil" in n for n in p3_names)
+    assert any("Catchlight" in n for n in p3_names)
+    assert any("Snout Smile" in n or "Division Line" in n for n in p3_names)
+    assert any("Inner Ear" in n for n in p3_names)
+
+    # Pass 4: Antler contours and specular gleams on tips
+    p4 = plan_refinement_fallback("Cartoon Moose Full Body", style="cartoon", loop_iteration=4, total_iterations=4)
+    p4_names = [s.get("params", {}).get("name", "") for s in p4["steps"]]
+    assert any("Antler" in n for n in p4_names)
+    assert any("Specular" in n or "Glint" in n for n in p4_names)
+
+
+def test_refinement_system_prompt_directs_fleshing_out_hollow_shapes():
+    """Verify that REFINEMENT_SYSTEM_PROMPT instructs the model to fill hollow outlines and maintain color harmony."""
+    from photocraft_painter.composer import REFINEMENT_SYSTEM_PROMPT
+
+    prompt_upper = REFINEMENT_SYSTEM_PROMPT.upper()
+    assert "HOLLOW" in prompt_upper
+    assert "EARS" in prompt_upper
+    assert "FORGOTTEN" in prompt_upper or "UNPAINTED" in prompt_upper
+    assert "COLOR HARMONY" in prompt_upper or "MATCHING" in prompt_upper
+    assert "SOLID" in prompt_upper
+
+
+
 
 
 

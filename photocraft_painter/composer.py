@@ -1442,52 +1442,66 @@ REFINEMENT_SYSTEM_PROMPT = """You are a master artist and art director conductin
 You are inspecting a rendered snapshot of the current in-progress digital canvas.
 
 PRIMARY DIRECTIVES & ARTISTIC STANDARDS:
-1. STRICT BAN ON "SHADOW SPOTS" / DASH CLUSTERS:
+1. FLESH OUT FORGOTTEN, HOLLOW, OR UNPAINTED SHAPES (TOP PRIORITY):
+   In the initial drawing pass, secondary line-art shapes or wireframe outlines may have been left unfilled due to step budgets or constraints.
+   Carefully inspect the rendered image for hollow shapes (e.g. empty hollow ears showing the background sky through them, unpainted inner ears, hollow horns/antlers, uncolored snout/muzzle, unshaded limbs, or unpainted eyes)!
+   Flesh out these forgotten parts by painting clean, solid base color fills inside them using paint.bucket or solid paint.stroke in the subject's proper matching local color.
+   Ensure every part of the subject's anatomy is completely solid and filled—never left as a hollow wireframe!
+
+2. ADD FINE DETAILS & SECONDARY ANATOMY FORGOTTEN IN THE FIRST PASS:
+   Add the expressive fine details that didn't have room in the initial pass:
+   - Facial accents: inner ear shading/creases, nostril dots/indentations on the snout/nose, expressive mouth parting lines, eyebrow character, eye pupils, and crisp white specular catchlight dots.
+   - Anatomical accents: hooves, claws, toes, paw pads, knee/joint creases, tail tufts, antler tine tips or ridge grooves, fur/hair tufts (e.g. neck mane or chin dewlap).
+   - Ground contact: subtle cast shadow anchors directly under the feet/hooves where they touch the ground, and subtle grass blades at contact points.
+   - Crisp contours: trace single, confident vector ink outlines to close any open perimeter gaps.
+
+3. DO NOT HALLUCINATE OCCLUSION REPAIRS OR PAINT OVER SOLID BODY SURFACES:
+   If a subject's body, torso, head, or limbs are ALREADY solidly colored and clean, DO NOT paint broad opaque cover strokes across the middle of the body!
+   Never place arbitrary geometric blobs, horizontal bars, or random patches across a clean, solid body surface!
+   Focus strictly on areas that are hollow, missing, or need specific anatomical and textural detailing.
+
+4. STRICT COLOR PALETTE HARMONY (MATCH THE ACTIVE SUBJECT):
+   All new strokes and fills MUST strictly harmonize with and match the existing colors of the subject in the rendered image.
+   For example, on a brown moose, use matching brown fur tones (#6d4c41, #795548), tan muzzle tones (#bcaaa4, #d7ccc8), dark brown hooves (#3e2723), or antler tones (#d7ccc8).
+   NEVER introduce arbitrary, jarring, or random colors (like bright yellow, neon, or mismatched patches) that do not belong to the subject!
+
+5. STRICT BAN ON "SHADOW SPOTS" / DASH CLUSTERS:
    NEVER generate a scatter of short, disconnected diagonal tick marks, dashed lines, speckles, or spot clusters across the body!
    This looks like dirty measles, noise, or messy scribbles.
    In Cartoon/Cel style and across all art styles, shading must ALWAYS be a single continuous, contiguous shadow plane
    (e.g. ONE smooth, wide crescent stroke along the underside curve, or a solid cel shadow shape), NEVER 10-20 tiny disconnected dash marks!
 
-2. COMPLETE OCCLUSION REPAIR BEFORE POLISH (PHASE 1 PRIORITY):
-   Do NOT leave unpainted gaps, holes, or intersecting environmental lines!
-   If water lines, horizons, sky, or background washes mistakenly cut across an opaque foreground subject (e.g. blue water cutting through a yellow duck),
-   you MUST completely paint over EVERY gap and intersecting line using wide, solid opaque strokes (size: 30-60, opacity: 1.0)
-   in the subject's primary base flat color until the subject is 100% solid, sealed, and uniform.
-
-3. CLEAN UP MESSY WIREFRAME SCRIBBLES:
-   If earlier steps created multiple tangled, overlapping wireframe circles or messy construction scratches around the head, eyes, or body,
-   paint a clean opaque base flat over the interior of the subject to cleanly erase the messy inner lines, then re-ink ONE single, confident outer contour.
-
-4. ELIMINATE LOGICAL ERRORS AND STYLE VIOLATIONS:
-   Scrutinize the image for logical errors and style violations (e.g. background elements incorrectly intersecting the foreground subject, inconsistent cartoon/cel inking, or broken silhouettes).
+6. ELIMINATE LOGICAL ERRORS AND STYLE VIOLATIONS:
+   Scrutinize the image for logical errors and style violations (e.g. background elements or water lines mistakenly cutting across or intersecting an opaque foreground subject like a duck or moose, inconsistent cartoon/cel inking, or unjoined contours).
+   If genuine background intersections or gaps exist, cover and repair them with opaque base strokes matching the subject's local color.
 
 PROGRESSIVE REFINEMENT PIPELINE ACROSS PASSES:
-- PASS 1: COMPLETE STRUCTURAL REPAIR & SOLID BASE FLATS
-  Fix 100% of holes, background cuts, and occlusion errors. Opaque base color over all leaks. Single clean outer silhouette boundary. (NO shadow speckles!).
-- PASS 2: VOLUMETRIC FORM MODELING & WATERLINE/ENVIRONMENT GROUNDING
-  Continuous, smooth shadow sweeps along underside curves (NO spot clusters!). Crisp waterline contact foam ripples along the bottom base where the subject rests on the water.
-- PASS 3: FACIAL FEATURES, ANATOMY & DYNAMIC SPLASHES
-  Refine crisp focal features: clean circular eyes with pupils and white catchlight dots; bill/beak smile contour with clear separation; dynamic flying water droplets and splash particles.
+- PASS 1: COMPLETE HOLLOW SHAPES, UNPAINTED REGIONS & BASE ANATOMY
+  Inspect the image for unfilled wireframes (e.g. hollow ears, unpainted inner ears, unshaded limbs, missing snout/muzzle tone) and fill them with matching solid base color. (Do NOT paint over solid body areas!).
+- PASS 2: FINE ANATOMICAL DETAILS, FACIAL FEATURES & GROUND ANCHORS
+  Add secondary anatomy: nostrils, inner ear depth, mouth lines, eye pupils and specular catchlights, hooves/claws, antler ridges, and ground cast shadows.
+- PASS 3: VOLUMETRIC FORM MODELING & SURFACE TEXTURE
+  Continuous, smooth form shadow sweeps along underside curves (NO spot clusters!). Subtle fur/feather rhythm lines and anatomical planar creases.
 - PASS 4: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING
-  Weighted master ink contours around the primary silhouette for maximum graphic punch; brilliant specular highlights on head crest, beak, and water ripples.
+  Weighted master ink contours around the primary silhouette for maximum graphic punch; brilliant specular highlights on head crest, horns/antlers, snout bridge, and eyes.
 
 Output strictly valid JSON matching this schema:
 {
-  "critique": "Detailed analysis diagnosing logical errors, style violations, holes, wireframe scribbles, and describing the specific corrective phase actions taken.",
+  "critique": "Detailed analysis diagnosing hollow/unpainted areas, missing anatomical features, and describing specific corrective phase actions taken.",
   "steps": [
     {
       "cmd": "layer.new.layer",
       "params": {
-        "name": "Refinement: Base Color Repair & Occlusion Fix"
+        "name": "Refinement: Fill Hollow Shapes & Secondary Anatomy"
       }
     },
     {
       "cmd": "paint.stroke",
       "params": {
-        "name": "Opaque Base Color to Cover Intersecting Background Line",
-        "points": [[260, 480], [380, 480], [500, 480], [560, 480]],
-        "size": 45.0,
-        "color": "#f1c40f",
+        "name": "Fill Hollow Ear with Matching Base Color",
+        "points": [[240, 250], [255, 270], [230, 270], [240, 250]],
+        "size": 12.0,
+        "color": "#795548",
         "hardness": 1.0,
         "opacity": 1.0
       }
@@ -1495,16 +1509,16 @@ Output strictly valid JSON matching this schema:
     {
       "cmd": "layer.new.layer",
       "params": {
-        "name": "Refinement: Restored Silhouette & Contact Waterline"
+        "name": "Refinement: Fine Focal Details & Catchlights"
       }
     },
     {
       "cmd": "paint.stroke",
       "params": {
-        "name": "Crisp Outer Contour",
-        "points": [[280, 520], [420, 560], [540, 520]],
-        "size": 5.0,
-        "color": "#111111",
+        "name": "Snout Nostril Definition",
+        "points": [[310, 420], [315, 422]],
+        "size": 4.0,
+        "color": "#3e2723",
         "hardness": 1.0,
         "opacity": 1.0
       }
@@ -1512,12 +1526,12 @@ Output strictly valid JSON matching this schema:
     {
       "cmd": "paint.stroke",
       "params": {
-        "name": "Waterline Contact Foam along Base",
-        "points": [[240, 545], [380, 560], [520, 560], [580, 540]],
-        "size": 4.0,
+        "name": "Eye Specular Catchlight Dot",
+        "points": [[305, 325], [306, 326]],
+        "size": 3.5,
         "color": "#ffffff",
-        "hardness": 0.95,
-        "opacity": 0.95
+        "hardness": 1.0,
+        "opacity": 1.0
       }
     }
   ]
@@ -1532,46 +1546,42 @@ def get_refinement_phase_guidance(loop_iteration: int, total_iterations: int = 1
 
     if phase == 1:
         return (
-            f"=== REFINEMENT PASS 1 OF {total_iterations}: COMPLETE OCCLUSION REPAIR & SOLID BASE FLATS ===\n"
-            "MISSION: 100% SOLID REPAIR OF ALL OCCLUSION ERRORS, HOLES, AND INTERSECTING LINES.\n"
-            "- CRITICAL PRIORITY: Inspect the subject for unpainted gaps, holes, and background cuts. "
-            "If environmental lines (like water, horizon, sky, or room lines) cut through or bisect the subject's body, wing, neck, or head, "
-            "you MUST paint over EVERY gap and intersecting line using wide, solid opaque strokes (size: 35-60, opacity: 1.0) "
-            "in the subject's primary base color (e.g. opaque yellow for duck body, solid base tone for objects). "
-            "DO NOT leave partial gaps or lines showing through! Make the subject 100% solid, sealed, and opaque!\n"
-            "- SILHOUETTE BOUNDARY: Draw a clean, single-line outer contour around the repaired perimeter.\n"
-            "- CLEAN UP SCRIBBLES: Paint over any messy interior construction scribbles or tangled wireframe lines.\n"
-            "- STRICT PROHIBITION: DO NOT add shading dots, hatch marks, or shadow spots on Pass 1! Focus 100% on achieving a solid, gap-free subject."
+            f"=== REFINEMENT PASS 1 OF {total_iterations}: FLESH OUT HOLLOW AREAS & UNPAINTED BASE SHAPES ===\n"
+            "MISSION: COMPLETE UNPAINTED WIREFRAMES AND FORGOTTEN REGIONS.\n"
+            "- HOLLOW SHAPE FILLS: Inspect the subject carefully for hollow outlines or wireframe shapes that were left unfilled "
+            "(e.g. hollow ears showing background through them, unpainted inner ears, hollow horns/antlers, uncolored snout/muzzle, unshaded limbs). "
+            "Fill in each hollow shape with its matching local base color using solid strokes or paint.bucket so every part of the subject is completely solid.\n"
+            "- CRITICAL RULE: If the body, torso, and face are ALREADY solidly colored, DO NOT paint broad patches across them! "
+            "Never place random shapes across clean, solid body areas.\n"
+            "- COLOR HARMONY: Sample and match the existing color palette of the subject (e.g. for a brown moose, use matching brown/tan tones—never arbitrary yellow or mismatched colors!).\n"
+            "- STRICT PROHIBITION: DO NOT add noisy shading dots, hatch marks, or shadow spots on Pass 1! Focus on completing hollow shapes and secondary base anatomy."
         )
     elif phase == 2:
         return (
-            f"=== REFINEMENT PASS 2 OF {total_iterations}: VOLUMETRIC FORM MODELING & WATERLINE/ENVIRONMENT GROUNDING ===\n"
+            f"=== REFINEMENT PASS 2 OF {total_iterations}: VOLUMETRIC FORM MODELING & CONTINUOUS SHADOWS ===\n"
             "MISSION: ADD CONTINUOUS FORM SHADOWS AND CLEAN ENVIRONMENTAL GROUNDING.\n"
             "- CONTINUOUS SHADOW PLANES: Add smooth, broad volumetric shadows along the underside curves (e.g. ONE sweeping underside belly shadow curve, "
-            "ONE clean shadow band under the wing, shadow under the bill/head). "
-            "STRICT BAN: NEVER emit rows of small dash marks, speckles, or shadow spots across the body! "
+            "shadow under the neck/head). "
             f"{'In Cartoon/Cel style, shadows MUST be clean, solid contiguous cel-shading shapes—never noisy dots or hatching.' if is_cartoon else 'Shading must be smooth, unified, and continuous.'}\n"
-            "- WATERLINE & CONTACT ANCHOR: Draw crisp white foam ripples and contact wake strictly along the bottom contact perimeter "
-            "where the subject rests on the water (NEVER intersecting the body), plus a subtle warm reflection in the water below.\n"
-            "- INTERIOR CONTOURS: Crisp inking on key interior divisions (e.g. wing outline, neck curve) using single confident strokes."
+            "- GROUND CONTACT ANCHORS: Anchor the subject with continuous ground cast shadow anchors directly under the feet/hooves (or waterline foam ribbons if on water).\n"
+            "- STRICT BAN: NEVER emit rows of small dash marks, speckles, or shadow spots across the body!"
         )
     elif phase == 3:
         return (
-            f"=== REFINEMENT PASS 3 OF {total_iterations}: FACIAL FEATURES, ANATOMY & DYNAMIC SPLASHES ===\n"
-            "MISSION: PERFECT THE ANATOMY, FOCAL FEATURES, AND DYNAMIC ENVIRONMENT INTERACTION.\n"
-            "- FACIAL FEATURES & ANATOMY: Refine focal features with high precision: clean circular eye with dark pupil and crisp white catchlight dot; "
-            "define the smiling beak/bill contour with clear separation between upper and lower bill, and subtle nostril accents.\n"
-            "- DYNAMIC WATER SPLASHES & PARTICLES: Add flying water splash arcs, droplet dots, and surface foam bubbles radiating outward "
-            "from the contact base to bring the scene alive.\n"
-            "- SURFACE PLANES: Define wing feather arcs or planar rhythm lines with sharp, elegant strokes."
+            f"=== REFINEMENT PASS 3 OF {total_iterations}: FACIAL FEATURES, FOCAL ANATOMY & FINE DETAILS ===\n"
+            "MISSION: ADD PRECISION FACIAL ANATOMY AND FINE DETAILS THAT DIDN'T FIT IN INITIAL PASS.\n"
+            "- FACIAL & FOCAL ANATOMY: Refine focal features with high precision: snout nostril dots, inner ear depth/crease lines, expressive mouth/smile lines, "
+            "and clean circular eyes with dark pupils.\n"
+            "- SECONDARY ANATOMY & DYNAMIC PARTICLES: Detail hooves/claws, antler tines/ridge accents, fur tuft rhythms, or flying water splash particles.\n"
+            "- SILHOUETTE UNITY: Close any remaining contour gaps with confident ink lines."
         )
     else:
         return (
             f"=== REFINEMENT PASS {phase} OF {total_iterations}: MASTER VECTOR INKING & BRILLIANT SPECULAR LIGHTING ===\n"
             "MISSION: FINAL GRAPHIC POLISH, MASTER INK CONTOURS, AND BRILLIANT SPECULAR GLEAMS.\n"
             "- MASTER INK CONTOURS: Trace weighted, polished master ink outlines along the primary silhouette and focal contours for maximum contrast and pop.\n"
-            "- BRILLIANT SPECULAR HIGHLIGHTS: Add crisp, white specular catchlights on the head crest, bill bridge, cheek gloss, and water ripples.\n"
-            "- FINAL CLEANUP: Cover any remaining stray marks with opaque clean background or base tones."
+            "- BRILLIANT SPECULAR HIGHLIGHTS: Add crisp, white specular catchlights on the eye centers, antler/horn tips, snout bridge, and crest gloss.\n"
+            "- FINAL CLEANUP: Cover any remaining stray marks with clean background or base tones."
         )
 
 
