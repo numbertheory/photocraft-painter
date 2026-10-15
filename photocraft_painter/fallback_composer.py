@@ -882,6 +882,8 @@ def plan_painterly_rubber_duck(
     bg = "#eef7fa"
     if style_preset.id == "sketchy":
         bg = "#fdfefe"
+    elif style_preset.id == "pencil":
+        bg = "#ffffff"
     elif style_preset.id == "dreamlike":
         bg = "#16122c"
     elif style_preset.id == "cartoon":
@@ -1175,6 +1177,8 @@ def plan_painterly_sunset(
     bg = "#110e1b"
     if style_preset.id == "sketchy":
         bg = "#fbfaf5"
+    elif style_preset.id == "pencil":
+        bg = "#ffffff"
     elif style_preset.id == "dreamlike":
         bg = "#0d0a21"
     elif style_preset.id == "cartoon":
@@ -1784,6 +1788,8 @@ def plan_painterly_racecar(
     bg = "#141419"
     if style_preset.id == "sketchy":
         bg = "#fdfefe"
+    elif style_preset.id == "pencil":
+        bg = "#ffffff"
     elif style_preset.id == "dreamlike":
         bg = "#140e26"
     elif style_preset.id == "cartoon":
@@ -1835,6 +1841,7 @@ def plan_painterly_pikachu(
     tongue_pink = "#f1948a" if style_preset.id != "sketchy" else "#bdc3c7"
     ink_color = "#151515" if style_preset.id != "sketchy" else "#1c2833"
     bg_color = (
+        "#ffffff" if style_preset.id == "pencil" else
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
@@ -2806,6 +2813,15 @@ def plan_dynamic_artwork(
             "accent": "#00ffff",
             "ink": "#fdfefe",
         }
+    elif style_preset.id == "pencil":
+        pal = {
+            "bg": "#ffffff",
+            "wash": "#6b7280",
+            "mid": "#4b5563",
+            "dark": "#374151",
+            "accent": "#9ca3af",
+            "ink": "#374151",
+        }
 
     # 1. Sketch layer
     steps.append({"cmd": "layer.new.layer", "params": {"name": f"1. Sketch: {prompt.title()}"}})
@@ -2964,17 +2980,18 @@ def plan_dynamic_artwork(
             "opacity": 1.0,
         },
     })
-    # Clean Paint Bucket flood fill inside the completely enclosed boundary
-    steps.append({
-        "cmd": "paint.bucket",
-        "params": {
-            "name": f"Paint Bucket: Silhouette Base Flat ({prompt})",
-            "x": int(s(400)),
-            "y": int(s(400)),
-            "color": pal["wash"],
-            "sampleAllLayers": True,
-        },
-    })
+    if style_preset.id != "pencil":
+        # Clean Paint Bucket flood fill inside the completely enclosed boundary
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"Paint Bucket: Silhouette Base Flat ({prompt})",
+                "x": int(s(400)),
+                "y": int(s(400)),
+                "color": pal["wash"],
+                "sampleAllLayers": True,
+            },
+        })
 
     if detail >= 2:
         # Inner focal zone bounding contour + secondary fill
@@ -2983,22 +3000,23 @@ def plan_dynamic_artwork(
             "params": {
                 "name": "Bounding Outline: Inner Focal Zone",
                 "points": stroke_enclosed_oval(s(400), s(400), s(115), s(95)),
-                "size": 3.8,
+                "size": 3.8 if style_preset.id != "pencil" else 2.2,
                 "color": pal["ink"],
-                "hardness": 0.95,
-                "opacity": 1.0,
+                "hardness": 0.95 if style_preset.id != "pencil" else 0.65,
+                "opacity": 1.0 if style_preset.id != "pencil" else 0.55,
             },
         })
-        steps.append({
-            "cmd": "paint.bucket",
-            "params": {
-                "name": "Paint Bucket: Inner Focal Flat",
-                "x": int(s(400)),
-                "y": int(s(400)),
-                "color": pal["mid"],
-                "sampleAllLayers": True,
-            },
-        })
+        if style_preset.id != "pencil":
+            steps.append({
+                "cmd": "paint.bucket",
+                "params": {
+                    "name": "Paint Bucket: Inner Focal Flat",
+                    "x": int(s(400)),
+                    "y": int(s(400)),
+                    "color": pal["mid"],
+                    "sampleAllLayers": True,
+                },
+            })
 
     # Painterly surface glazes and textures over the solid flat (scales with detail level)
     if detail <= 5:
@@ -4049,6 +4067,14 @@ def plan_painterly_portrait(
         hair_base = "#7f8c8d"
         hair_wave = "#566573"
         hair_gold = "#bdc3c7"
+    elif style_preset.id == "pencil":
+        bg_color = "#ffffff"
+        sky_wash = "#ffffff"
+        skin_base = "#f2f4f4"
+        skin_fill = "#ffffff"
+        hair_base = "#6b7280"
+        hair_wave = "#4b5563"
+        hair_gold = "#9ca3af"
     elif style_preset.id == "dreamlike":
         bg_color = "#21163e"
         sky_wash = "#3a256a"
@@ -5003,6 +5029,13 @@ def plan_painterly_geometric_shape(
         shade_color = "#2c3e50"
         guide_color = "#7f8c8d"
         highlight_color = "#f2f4f4"
+    elif style_preset.id == "pencil":
+        bg_color = "#ffffff"
+        ink_color = "#374151"
+        fill_color = "#f3f4f6"
+        shade_color = "#4b5563"
+        guide_color = "#6b7280"
+        highlight_color = "#ffffff"
     elif style_preset.id == "cartoon":
         bg_color = "#ffffff"
         ink_color = "#000000"
@@ -5151,17 +5184,18 @@ def plan_painterly_geometric_shape(
         },
     })
 
-    # Flood fill cleanly inside centroid
-    steps.append({
-        "cmd": "paint.bucket",
-        "params": {
-            "name": f"{shape_name} Flat Fill",
-            "x": int(round(cx)),
-            "y": int(round(cy)),
-            "color": fill_color,
-            "sampleAllLayers": True,
-        },
-    })
+    if style_preset.id != "pencil":
+        # Flood fill cleanly inside centroid
+        steps.append({
+            "cmd": "paint.bucket",
+            "params": {
+                "name": f"{shape_name} Flat Fill",
+                "x": int(round(cx)),
+                "y": int(round(cy)),
+                "color": fill_color,
+                "sampleAllLayers": True,
+            },
+        })
 
     # 4. Facet Shading & Modeling layer
     steps.append({"cmd": "layer.new.layer", "params": {"name": f"4. Facet Shading & Form ({shape_name})"}})
@@ -5177,10 +5211,10 @@ def plan_painterly_geometric_shape(
             "params": {
                 "name": "Facet: Center Ridge Line",
                 "points": stroke_line(apex[0], apex[1], base_mid[0], base_mid[1], steps=20, wobble=0.0 if style_preset.id == "cartoon" else 0.2),
-                "size": 3.2,
+                "size": 3.2 if style_preset.id != "pencil" else 1.8,
                 "color": ink_color if style_preset.id == "cartoon" else shade_color,
-                "hardness": 0.95,
-                "opacity": 0.85,
+                "hardness": 0.95 if style_preset.id != "pencil" else 0.65,
+                "opacity": 0.85 if style_preset.id != "pencil" else 0.55,
             },
         })
 
@@ -5210,7 +5244,7 @@ def plan_painterly_geometric_shape(
                     "sampleAllLayers": True,
                 },
             })
-        elif style_preset.id == "sketchy":
+        elif style_preset.id in ("sketchy", "pencil"):
             # Directional cross-hatching inside the right facet
             hatch_count = 6 + detail * 2
             for h_i in range(1, hatch_count + 1):
@@ -5223,11 +5257,11 @@ def plan_painterly_geometric_shape(
                     "cmd": "paint.stroke",
                     "params": {
                         "name": f"Facet Cross-Hatch {h_i}",
-                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=10, wobble=0.3),
-                        "size": 2.2,
+                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=10, wobble=0.25 if style_preset.id == "pencil" else 0.3),
+                        "size": 1.6 if style_preset.id == "pencil" else 2.2,
                         "color": shade_color,
-                        "hardness": 0.9,
-                        "opacity": 0.75,
+                        "hardness": 0.65 if style_preset.id == "pencil" else 0.9,
+                        "opacity": 0.45 if style_preset.id == "pencil" else 0.75,
                     },
                 })
         elif style_preset.id == "cubism":
@@ -5458,6 +5492,11 @@ def plan_refinement_fallback(
         shadow_color = "#2c3e50"
         base_color = "#f2f4f4"
         highlight_color = "#fdfefe"
+    elif style_preset.id == "pencil":
+        ink_color = "#374151"
+        shadow_color = "#4b5563"
+        base_color = "#f3f4f6"
+        highlight_color = "#ffffff"
     elif style_preset.id == "dreamlike":
         ink_color = "#2e1c4a"
         shadow_color = "#3a256a"

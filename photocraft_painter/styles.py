@@ -1,6 +1,6 @@
 """Artistic style definitions and aesthetic presets for PhotoCraft Painter.
 
-Provides overarching art styles (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism)
+Provides overarching art styles (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism, pencil)
 that govern prompt engineering, color palettes, brushstroke dynamics, and detail generation.
 """
 
@@ -67,6 +67,13 @@ class StylePreset:
                 g_c = int(min(255, (g * 0.55 + gray * 0.4 + 8) * (1.12 if gray > 120 else 0.80)) * factor)
                 b_c = int(min(255, (b * 0.42 + gray * 0.4) * (1.05 if gray > 120 else 0.78)) * factor)
                 r, g, b = r_c, g_c, b_c
+            elif self.id == "pencil":
+                # Pure monochromatic graphite pencil tones: map luminance to medium-light graphite range
+                gray = int(0.299 * r + 0.587 * g + 0.114 * b)
+                graphite = int(45 + (gray / 255.0) * 145)
+                r = int(graphite * factor)
+                g = int(graphite * factor)
+                b = int(min(255, graphite + 2) * factor)
             else:
                 # Realistic & Painterly: standard luminance scaling
                 r = int(r * factor)
@@ -206,6 +213,28 @@ STYLE_PRESETS: dict[str, StylePreset] = {
         wash_hardness=0.92,
         wash_opacity=0.95,
         color_mood="Earthy ochre, warm terracotta, slate gray, burnt umber, and high-contrast volumetric facet lighting",
+    ),
+    "pencil": StylePreset(
+        id="pencil",
+        name="Pencil",
+        description="Animation style pencil test roughs: light graphite pencil strokes, minimal cross-hatching, no hard ink or paint, single drawing layer",
+        ai_guidance=(
+            "ARTISTIC STYLE: PENCIL (ANIMATION PENCIL TEST / ROUGHS)\n"
+            "- Recreate an authentic animation studio pencil test drawing (rough keyframe animation drawings on animation paper).\n"
+            "- Use ONLY light, delicate brush strokes of a graphite pencil (2H, HB, 2B pencil lead).\n"
+            "- ABSOLUTELY NO hard inked lines, heavy solid black ink contours, or marker outlines.\n"
+            "- ABSOLUTELY NO paint fills, paint bucket fills, solid color washes, or digital airbrush gradients.\n"
+            "- Keep shading to an absolute minimum: NO paint blending. Volume and form must be suggested ONLY through light, directional cross-hatching and diagonal pencil strokes.\n"
+            "- Loose construction guides, gestural rough circles, action lines, and motion rhythms are encouraged to give the authentic feel of a hand-drawn animation pencil test.\n"
+            "- Palette: Pure graphite pencil tones (#2d3436, #4b5563, #6b7280, #9ca3af) on clean white/off-white animation paper (#ffffff or #fdfefe).\n"
+            "- The entire finished drawing exists as a single transparent drawing layer above the background."
+        ),
+        wobble=0.32,
+        outline_hardness=0.65,
+        outline_size_scale=0.65,
+        wash_hardness=0.55,
+        wash_opacity=0.45,
+        color_mood="Monochromatic graphite pencil (#2d3436, #4b5563, #718096), clean white animation paper, delicate cross-hatching, no paint",
     ),
 }
 

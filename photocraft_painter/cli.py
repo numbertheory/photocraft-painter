@@ -219,6 +219,13 @@ async def draw_prompt(
                 except Exception:
                     pass
 
+    if config.style.lower() == "pencil":
+        try:
+            from photocraft_painter.artist import merge_drawing_layers_to_single_layer
+            await merge_drawing_layers_to_single_layer(client, target_name="Pencil Drawing")
+        except Exception as e:
+            logger.debug("Final pencil layer consolidation check: %s", e)
+
     console.print(
         f"[bold green]✨ Artwork complete on your PhotoCraft screen![/]\n"
     )

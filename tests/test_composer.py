@@ -266,7 +266,7 @@ def test_densify_artwork_plan_scales_ai_models():
 
 
 def test_style_presets_and_lookup():
-    expected_styles = ["realistic", "dreamlike", "abstract", "sketchy", "cartoon", "painterly", "cubism"]
+    expected_styles = ["realistic", "dreamlike", "abstract", "sketchy", "cartoon", "painterly", "cubism", "pencil"]
     for s_name in expected_styles:
         assert s_name in STYLE_PRESETS
         preset = get_style(s_name)
@@ -281,6 +281,8 @@ def test_style_presets_and_lookup():
     assert get_style("   sKeTchY  ").id == "sketchy"
     assert get_style("CUBISM").id == "cubism"
     assert get_style("  Cubism  ").id == "cubism"
+    assert get_style("PENCIL").id == "pencil"
+    assert get_style("  Pencil  ").id == "pencil"
 
     # Default fallback to realistic for missing/invalid
     assert get_style(None).id == "realistic"
@@ -295,6 +297,7 @@ def test_style_color_adjustment():
     abstract = get_style("abstract")
     realistic = get_style("realistic")
     cubism = get_style("cubism")
+    pencil = get_style("pencil")
 
     orig_color = "#3498db"
     # Sketchy should desaturate towards graphite
@@ -318,6 +321,11 @@ def test_style_color_adjustment():
     adj_cubism = cubism.adjust_color(orig_color)
     assert adj_cubism.startswith("#")
     assert adj_cubism != orig_color
+
+    # Pencil shifts to pure graphite pencil tone
+    adj_pencil = pencil.adjust_color(orig_color)
+    assert adj_pencil.startswith("#")
+    assert adj_pencil != orig_color
 
     # None or non-hex returns as-is safely
     assert realistic.adjust_color(None) is None
@@ -422,6 +430,11 @@ def test_plan_fallback_with_styles():
     assert "Cubism" in portrait_cubism["title"]
     assert portrait_cubism["style"] == "cubism"
     assert portrait_cubism["background"] == "#1c1917"
+
+    portrait_pencil = plan_fallback("portrait of a woman", style="pencil")
+    assert "Pencil" in portrait_pencil["title"]
+    assert portrait_pencil["style"] == "pencil"
+    assert portrait_pencil["background"] == "#ffffff"
 
 
 def test_plan_artwork_style_forwarding():
@@ -1307,7 +1320,7 @@ def test_config_loop_setting_and_clamping():
 
 
 def test_plan_refinement_fallback_all_styles():
-    for style in ["realistic", "cubism", "cartoon", "sketchy", "dreamlike", "abstract"]:
+    for style in ["realistic", "cubism", "cartoon", "sketchy", "dreamlike", "abstract", "painterly", "pencil"]:
         refine = plan_refinement_fallback("a majestic portrait", width=800, height=800, detail_level=5, style=style, loop_iteration=1)
         assert refine["is_refinement"] is True
         assert refine["style"] == style
@@ -1722,6 +1735,117 @@ def test_refinement_system_prompt_directs_fleshing_out_hollow_shapes():
     assert "FORGOTTEN" in prompt_upper or "UNPAINTED" in prompt_upper
     assert "COLOR HARMONY" in prompt_upper or "MATCHING" in prompt_upper
     assert "SOLID" in prompt_upper
+
+
+def test_pencil_style_plan_characteristics():
+    """Verify pencil animation style creates clean graphite linework with zero paint bucket fills."""
+    cfg = PainterConfig(provider="none", style="pencil", detail_level=5)
+    plan, src = plan_artwork("a running deer", cfg)
+
+    assert "[Pencil]" in plan["title"]
+    assert plan["style"] == "pencil"
+    assert plan["background"] in ("#ffffff", "#fdfefe")
+
+    # Strictly no paint bucket fills
+    bucket_steps = [s for s in plan["steps"] if s.get("cmd") == "paint.bucket"]
+    assert len(bucket_steps) == 0
+
+    # Only light brush strokes of graphite pencil
+    stroke_steps = [s for s in plan["steps"] if s.get("cmd") == "paint.stroke"]
+    assert len(stroke_steps) > 0
+    for st in stroke_steps:
+        p = st.get("params", {})
+        size = float(p.get("size", 1.0))
+        hardness = float(p.get("hardness", 1.0))
+        opacity = float(p.get("opacity", 1.0))
+        col = p.get("color", "")
+
+        assert size <= 3.2
+        assert hardness <= 0.70
+        assert opacity <= 0.65
+        assert col.startswith("#")
+
+
+def test_sanitize_pencil_plan():
+    """Verify sanitize_pencil_plan removes paint bucket fills and softens harsh stroke parameters."""
+    from photocraft_painter.composer import sanitize_pencil_plan
+
+    raw_plan = {
+        "title": "Dog",
+        "background": "#ff0000",
+        "steps": [
+            {"cmd": "layer.new.layer", "params": {"name": "1. Sketch"}},
+            {"cmd": "paint.stroke", "params": {"name": "Heavy Ink", "size": 15.0, "hardness": 1.0, "opacity": 1.0, "color": "#000000", "points": [[0, 0], [10, 10]]}},
+            {"cmd": "paint.bucket", "params": {"name": "Paint Bucket Fill", "x": 50, "y": 50, "color": "#ff0000"}},
+            {"cmd": "shape.create", "params": {"name": "Collar", "fill": "#00ff00", "stroke": "#000000"}},
+        ],
+    }
+
+    clean = sanitize_pencil_plan(raw_plan)
+    assert clean["style"] == "pencil"
+    assert clean["background"] == "#ffffff"
+
+    # Bucket is dropped
+    assert not any(s.get("cmd") == "paint.bucket" for s in clean["steps"])
+
+    # Stroke is scaled and softened
+    strokes = [s for s in clean["steps"] if s.get("cmd") == "paint.stroke"]
+    assert len(strokes) == 1
+    assert strokes[0]["params"]["size"] <= 3.0
+    assert strokes[0]["params"]["hardness"] <= 0.70
+    assert strokes[0]["params"]["opacity"] <= 0.65
+    assert strokes[0]["params"]["color"].startswith("#")
+
+    # Shape fill is removed
+    shapes = [s for s in clean["steps"] if s.get("cmd") == "shape.create"]
+    assert len(shapes) == 1
+    assert shapes[0]["params"]["fill"] is None
+
+
+@pytest.mark.anyio
+async def test_merge_drawing_layers_to_single_layer():
+    """Verify that merge_drawing_layers_to_single_layer consolidates all layers above background into 1 layer."""
+    from unittest.mock import AsyncMock
+    from photocraft_painter.artist import merge_drawing_layers_to_single_layer
+
+    # Simulate 4 layers: [Top/Layer 3, Layer 2, Layer 1, Background]
+    state = {
+        "layers": [
+            {"id": 3, "name": "Layer 3"},
+            {"id": 2, "name": "Layer 2"},
+            {"id": 1, "name": "Layer 1"},
+            {"id": 0, "name": "Background"},
+        ]
+    }
+
+    mock_client = AsyncMock()
+
+    async def mock_doc_inspect():
+        return {"layers": list(state["layers"])}
+
+    async def mock_command_run(cmd, params):
+        if cmd == "layer.mergeDown":
+            # Merges top layer into the layer beneath it
+            if len(state["layers"]) > 2:
+                # Remove top layer
+                state["layers"].pop(0)
+            return {"success": True}
+        if cmd == "layer.renameLayer":
+            for l in state["layers"]:
+                if l["id"] == params.get("layer"):
+                    l["name"] = params.get("name")
+            return {"success": True}
+        return {}
+
+    mock_client.doc_inspect = mock_doc_inspect
+    mock_client.command_run = mock_command_run
+
+    result = await merge_drawing_layers_to_single_layer(mock_client, target_name="Pencil Drawing")
+    assert result is True
+    # Should leave exactly 2 layers: Pencil Drawing and Background
+    assert len(state["layers"]) == 2
+    assert state["layers"][0]["name"] == "Pencil Drawing"
+    assert state["layers"][1]["name"] == "Background"
 
 
 

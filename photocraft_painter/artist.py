@@ -175,6 +175,8 @@ async def execute_live_drawing(
     finally:
         # 3. Always restore all layers to visible once the drawing process finishes
         await restore_all_layers()
+        if str(style).lower() == "pencil":
+            await merge_drawing_layers_to_single_layer(client, target_name="Pencil Drawing")
 
     return {
         "title": doc_name,
@@ -183,3 +185,94 @@ async def execute_live_drawing(
         "steps_drawn": succeeded,
         "total_steps": total,
     }
+
+
+async def merge_drawing_layers_to_single_layer(
+    client: PhotocraftMcpClient,
+    target_name: str = "Pencil Drawing",
+) -> bool:
+    """Merge all drawing layers above the background into a single drawing layer.
+
+    Guarantees that the document has exactly two layers: 1 background and 1 containing the drawing.
+    """
+    try:
+        if hasattr(client, "doc_inspect") and callable(client.doc_inspect):
+            info = await client.doc_inspect()
+        else:
+            info = await client.command_run("document.inspect", {})
+        if not isinstance(info, dict):
+            return False
+
+        layers = info.get("layers", [])
+        if len(layers) <= 1:
+            return True
+
+        if len(layers) == 2:
+            top_id = layers[0].get("id")
+            if top_id is not None:
+                try:
+                    await client.command_run("layer.renameLayer", {"layer": top_id, "name": target_name})
+                except Exception as e:
+                    logger.debug("Could not rename top layer: %s", e)
+            return True
+
+        # When len(layers) > 2, merge down from the top until only 2 layers remain
+        max_merges = len(layers) - 2
+        for _ in range(max_merges + 5):
+            if hasattr(client, "doc_inspect") and callable(client.doc_inspect):
+                cur_info = await client.doc_inspect()
+            else:
+                cur_info = await client.command_run("document.inspect", {})
+            if not isinstance(cur_info, dict):
+                break
+            cur_layers = cur_info.get("layers", [])
+            if len(cur_layers) <= 2:
+                break
+
+            top_id = cur_layers[0].get("id")
+            if top_id is None:
+                break
+
+            try:
+                await client.command_run("layer.mergeDown", {"layer": top_id})
+            except Exception as e:
+                logger.debug("layer.mergeDown failed for layer %s: %s, attempting mergeVisible fallback", top_id, e)
+                bg_id = cur_layers[-1].get("id")
+                if bg_id is not None:
+                    try:
+                        await client.command_run("layer.setProps", {"layer": bg_id, "visible": False})
+                    except Exception:
+                        pass
+                try:
+                    await client.command_run("layer.mergeVisible", {})
+                except Exception as e_mv:
+                    logger.warning("layer.mergeVisible fallback notice: %s", e_mv)
+                if bg_id is not None:
+                    try:
+                        await client.command_run("layer.setProps", {"layer": bg_id, "visible": True})
+                    except Exception:
+                        pass
+                break
+
+        # After merging down, rename the final top layer to target_name and ensure visibility
+        final_info = await client.doc_inspect() if hasattr(client, "doc_inspect") else await client.command_run("document.inspect", {})
+        if isinstance(final_info, dict):
+            final_layers = final_info.get("layers", [])
+            if final_layers:
+                final_top_id = final_layers[0].get("id")
+                if final_top_id is not None:
+                    try:
+                        await client.command_run("layer.renameLayer", {"layer": final_top_id, "name": target_name})
+                    except Exception as e:
+                        logger.debug("Could not rename final top layer: %s", e)
+                for l in final_layers:
+                    lid = l.get("id")
+                    if lid is not None:
+                        try:
+                            await client.command_run("layer.setProps", {"layer": lid, "visible": True})
+                        except Exception:
+                            pass
+        return True
+    except Exception as e:
+        logger.warning("Error consolidating drawing layers: %s", e)
+        return False

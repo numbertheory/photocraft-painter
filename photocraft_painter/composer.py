@@ -831,17 +831,21 @@ def densify_artwork_plan(
                 for i, pt in enumerate(pts)
             ]
             wash_color = style_preset.adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06)
+            wash_name = f"{name} (Pencil Gesture {w_count})" if style_preset.id == "pencil" else f"{name} ({style_preset.name} Wash {w_count})"
+            wash_size = max(1.5, min(2.8, round(size * 0.1, 1))) if style_preset.id == "pencil" else max(8.0, round(size * (0.85 + 0.15 * (w_count % 2)), 1))
+            wash_hard = 0.6 if style_preset.id == "pencil" else round(hardness * 0.9, 2)
+            wash_opac = 0.4 if style_preset.id == "pencil" else round(max(0.35, opacity * 0.88), 2)
             add_child(
                 s,
                 {
                     "cmd": "paint.stroke",
                     "params": {
-                        "name": f"{name} ({style_preset.name} Wash {w_count})",
+                        "name": wash_name,
                         "points": off_pts,
-                        "size": max(8.0, round(size * (0.85 + 0.15 * (w_count % 2)), 1)),
+                        "size": wash_size,
                         "color": wash_color,
-                        "hardness": round(hardness * 0.9, 2),
-                        "opacity": round(max(0.35, opacity * 0.88), 2),
+                        "hardness": wash_hard,
+                        "opacity": wash_opac,
                     },
                 },
             )
@@ -907,6 +911,12 @@ def densify_artwork_plan(
                 hatch_hardness = 0.98
                 hatch_opacity = 0.95
                 hatch_label = f"{name} (Cubist Facet Plane {sh_count})"
+            elif style_preset.id == "pencil":
+                hatch_color = style_preset.adjust_color(col, 0.85) or "#4b5563"
+                hatch_size = max(1.2, min(2.4, round(size * 0.12, 1)))
+                hatch_hardness = 0.65
+                hatch_opacity = 0.45
+                hatch_label = f"{name} (Pencil Cross-Hatch {sh_count})"
             else:
                 hatch_color = style_preset.adjust_color(col, 0.88)
                 hatch_size = max(2.0, min(5.0, round(size * 0.22, 1)))
@@ -985,6 +995,12 @@ def densify_artwork_plan(
                 outline_hardness = 0.98
                 outline_opacity = 0.98
                 label = f"{name} (Cubist Edge Fracture {c_count})"
+            elif style_preset.id == "pencil":
+                outline_color = style_preset.adjust_color(col, 0.85) or "#374151"
+                outline_size = max(1.2, min(2.4, round(size * 0.45 * style_preset.outline_size_scale, 1)))
+                outline_hardness = 0.65
+                outline_opacity = 0.55
+                label = f"{name} (Pencil Rough Contour {c_count})"
             else:
                 outline_color = col
                 outline_size = max(1.8, round(size * 0.75 * style_preset.outline_size_scale, 1))
@@ -1062,6 +1078,12 @@ def densify_artwork_plan(
                 hi_hardness = 0.95
                 hi_opacity = 0.95
                 label = f"{name} (Facet Plane Light {h_count})"
+            elif style_preset.id == "pencil":
+                hi_color = "#9ca3af" if h_count % 2 == 0 else "#ffffff"
+                hi_size = max(1.2, min(2.0, round(size * 0.35, 1)))
+                hi_hardness = 0.6
+                hi_opacity = 0.35
+                label = f"{name} (Pencil Accent {h_count})"
             else:
                 hi_color = "#ffffff"
                 hi_size = max(2.5, round(size * 0.65, 1))
@@ -1247,6 +1269,7 @@ def compose_with_ollama(
     title = format_document_title(base_title, style=config.style, detail_level=detail, model=model)
 
     bg_fallback = (
+        "#ffffff" if style_preset.id == "pencil" else
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
@@ -1357,6 +1380,7 @@ def compose_with_openai(
     title = format_document_title(base_title, style=config.style, detail_level=detail, model=config.openai_model)
 
     bg_fallback = (
+        "#ffffff" if style_preset.id == "pencil" else
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
@@ -1471,6 +1495,7 @@ def compose_with_gemini(
     title = format_document_title(base_title, style=config.style, detail_level=detail, model=gemini_model)
 
     bg_fallback = (
+        "#ffffff" if style_preset.id == "pencil" else
         "#fdfefe" if style_preset.id == "sketchy" else
         "#111822" if style_preset.id == "abstract" else
         "#16122c" if style_preset.id == "dreamlike" else
@@ -1489,6 +1514,61 @@ def compose_with_gemini(
         "steps": normalized_steps,
     }
     return densify_artwork_plan(plan, detail_level=detail, style=config.style)
+
+
+def sanitize_pencil_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize plan for the 'pencil' animation style.
+
+    Enforces:
+    - Clean white animation paper background (#ffffff).
+    - Strictly NO paint bucket fills (drops paint.bucket).
+    - Strictly NO solid paint fills on shapes (fill=None).
+    - Soft, light graphite pencil stroke dynamics (hardness <= 0.70, opacity <= 0.65, size <= 3.0).
+    - Monochromatic graphite palette mapping.
+    """
+    style_preset = get_style("pencil")
+    clean_plan = dict(plan)
+    clean_plan["style"] = "pencil"
+    clean_plan["background"] = "#ffffff"
+
+    raw_steps = plan.get("steps") or []
+    cleaned_steps: list[dict[str, Any]] = []
+
+    for step in raw_steps:
+        cmd = step.get("cmd") or step.get("id") or ""
+        # Strictly drop all paint bucket fills
+        if cmd == "paint.bucket":
+            continue
+
+        step_copy = dict(step)
+        params = dict(step.get("params") or {})
+
+        if cmd == "shape.create":
+            # Remove solid paint fills from vector shapes
+            if params.get("fill"):
+                params["fill"] = None
+            if params.get("stroke"):
+                params["stroke"] = style_preset.adjust_color(params.get("stroke")) or "#374151"
+            step_copy["params"] = params
+            cleaned_steps.append(step_copy)
+        elif cmd == "paint.stroke":
+            col = params.get("color")
+            params["color"] = style_preset.adjust_color(col) or "#374151"
+            size = float(params.get("size") or 3.0)
+            if size > 3.0:
+                params["size"] = max(1.2, round(min(size * 0.35, 2.8), 1))
+            hardness = float(params.get("hardness") or 0.65)
+            params["hardness"] = min(hardness, 0.70)
+            opacity = float(params.get("opacity") or 0.55)
+            params["opacity"] = min(opacity, 0.65)
+            step_copy["params"] = params
+            cleaned_steps.append(step_copy)
+        else:
+            step_copy["params"] = params
+            cleaned_steps.append(step_copy)
+
+    clean_plan["steps"] = cleaned_steps
+    return clean_plan
 
 
 def plan_artwork(
@@ -1511,19 +1591,24 @@ def plan_artwork(
     detail = max(1, min(config.detail_level, 25))
     style_preset = get_style(config.style)
 
+    def wrap_plan(p: dict[str, Any], src: str) -> tuple[dict[str, Any], str]:
+        if config.style.lower() == "pencil":
+            return sanitize_pencil_plan(p), src
+        return p, src
+
     # 0. Explicit offline / procedural fallback requested
     if config.provider in ("none", "fallback", "builtin"):
         logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
         plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images, model="built-in")
         plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
-        return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
+        return wrap_plan(plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)")
 
     # 1. If Gemini provider is requested
     if config.provider in ("gemini", "google"):
         try:
             plan = compose_with_gemini(prompt, config, width, height, images=images)
             if plan.get("steps"):
-                return plan, f"Gemini ({config.gemini_model})"
+                return wrap_plan(plan, f"Gemini ({config.gemini_model})")
         except Exception as e:
             logger.warning("Gemini composition failed: %s", e)
 
@@ -1532,7 +1617,7 @@ def plan_artwork(
         try:
             plan = compose_with_openai(prompt, config, width, height, images=images)
             if plan.get("steps"):
-                return plan, f"OpenAI ({config.openai_model})"
+                return wrap_plan(plan, f"OpenAI ({config.openai_model})")
         except Exception as e:
             logger.warning("OpenAI composition failed: %s", e)
 
@@ -1541,7 +1626,7 @@ def plan_artwork(
         try:
             plan = compose_with_ollama(prompt, config, width, height, images=images)
             if plan.get("steps"):
-                return plan, f"Ollama ({config.ollama_model})"
+                return wrap_plan(plan, f"Ollama ({config.ollama_model})")
         except Exception as e:
             logger.warning("Ollama composition failed: %s", e)
 
@@ -1550,7 +1635,7 @@ def plan_artwork(
         try:
             plan = compose_with_gemini(prompt, config, width, height, images=images)
             if plan.get("steps"):
-                return plan, f"Gemini ({config.gemini_model})"
+                return wrap_plan(plan, f"Gemini ({config.gemini_model})")
         except Exception as e:
             logger.warning("Gemini composition failed: %s", e)
 
@@ -1559,7 +1644,7 @@ def plan_artwork(
         try:
             plan = compose_with_openai(prompt, config, width, height, images=images)
             if plan.get("steps"):
-                return plan, f"OpenAI ({config.openai_model})"
+                return wrap_plan(plan, f"OpenAI ({config.openai_model})")
         except Exception as e:
             logger.warning("OpenAI composition failed: %s", e)
 
@@ -1567,7 +1652,7 @@ def plan_artwork(
     logger.info("Using built-in procedural composer for '%s' (style: %s, detail level: %d)", prompt, style_preset.name, detail)
     plan = plan_fallback(prompt, width, height, detail_level=detail, style=config.style, images=images, model="built-in")
     plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
-    return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
+    return wrap_plan(plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)")
 
 
 REFINEMENT_SYSTEM_PROMPT = """You are a master artist and art director conducting an iterative refinement feedback pass in PhotoCraft.
@@ -1675,6 +1760,37 @@ def get_refinement_phase_guidance(loop_iteration: int, total_iterations: int = 1
     """Return stage-specific artist instructions for progressive refinement loops (Pass 1 to 4)."""
     phase = min(loop_iteration, 4)
     is_cartoon = style.lower() in ("cartoon", "cel")
+    is_pencil = style.lower() == "pencil"
+
+    if is_pencil:
+        pencil_phases = {
+            1: (
+                f"=== REFINEMENT PASS 1 OF {total_iterations}: COMPLETE ANATOMICAL ROUGHS & FORGOTTEN FEATURES (PENCIL STYLE) ===\n"
+                "MISSION: FLESH OUT HOLLOW AREAS USING ONLY LIGHT GRAPHITE PENCIL STROKES.\n"
+                "- STRICT PENCIL ENFORCEMENT: Use ONLY light graphite pencil strokes (#2d3436, #4b5563, #6b7280). ABSOLUTELY NO paint bucket fills, NO solid paint washes, NO hard ink contours!\n"
+                "- Infill missing anatomical features (e.g. inner ears, horns, snout lines) with loose gesture and delicate pencil construction lines.\n"
+                "- Keep pencil pressure light (opacity <= 0.60, hardness <= 0.65, size <= 2.5)."
+            ),
+            2: (
+                f"=== REFINEMENT PASS 2 OF {total_iterations}: DELICATE DIRECTIONAL CROSS-HATCHING (PENCIL STYLE) ===\n"
+                "MISSION: MODEL THREE-DIMENSIONAL VOLUME USING ONLY MINIMAL CROSS-HATCHING.\n"
+                "- STRICT RULE: NO PAINT SHADING! Form and depth must be suggested ONLY through fine, directional cross-hatching and diagonal pencil strokes (hardness 0.65, opacity <= 0.50, size <= 2.0).\n"
+                "- Keep cross-hatching to a clean minimum, following the structural curvature of the form."
+            ),
+            3: (
+                f"=== REFINEMENT PASS 3 OF {total_iterations}: PRECISION FACIAL & FOCAL DETAILS (PENCIL STYLE) ===\n"
+                "MISSION: TIGHTEN FOCAL FACIAL ANATOMY WITH CRISP PENCIL LINEWORK.\n"
+                "- Refine focal features with delicate graphite pencil lines (size 1.2-2.0, hardness 0.65): eye contours, iris circles, pupils, expressive mouth lines, and texture accents.\n"
+                "- NO thick black marker ink lines!"
+            ),
+            4: (
+                f"=== REFINEMENT PASS 4 OF {total_iterations}: FINAL ANIMATION ROUGH POLISH (PENCIL STYLE) ===\n"
+                "MISSION: CLEAN UP ANIMATION KEYFRAME ROUGHS AND ACCENT CONTOURS.\n"
+                "- Polish key silhouette contours with weighted graphite lines (size 1.5-2.5, opacity <= 0.65).\n"
+                "- Add subtle kneaded-eraser highlights or light graphite accents. NO opaque white paint!"
+            ),
+        }
+        return pencil_phases.get(phase, pencil_phases[1])
 
     if phase == 1:
         return (
@@ -2032,6 +2148,11 @@ def plan_refinement_artwork(
     """
     style_preset = get_style(config.style)
 
+    def wrap_plan(p: dict[str, Any], src: str) -> tuple[dict[str, Any], str]:
+        if config.style.lower() == "pencil":
+            return sanitize_pencil_plan(p), src
+        return p, src
+
     # 0. Offline / procedural fallback requested
     if config.provider in ("none", "fallback", "builtin"):
         logger.info("Using built-in procedural refiner for '%s' (style: %s, loop: %d/%d)", prompt, style_preset.name, loop_iteration, total_iterations)
@@ -2046,7 +2167,7 @@ def plan_refinement_artwork(
             total_iterations=total_iterations,
             model="built-in",
         )
-        return plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})"
+        return wrap_plan(plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})")
 
     # 1. If Gemini provider is requested
     if config.provider in ("gemini", "google"):
@@ -2055,7 +2176,7 @@ def plan_refinement_artwork(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
             )
             if plan.get("steps"):
-                return plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}"
+                return wrap_plan(plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}")
         except Exception as e:
             logger.warning("Gemini refinement composition failed: %s", e)
 
@@ -2066,7 +2187,7 @@ def plan_refinement_artwork(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
             )
             if plan.get("steps"):
-                return plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}"
+                return wrap_plan(plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}")
         except Exception as e:
             logger.warning("OpenAI refinement composition failed: %s", e)
 
@@ -2077,7 +2198,7 @@ def plan_refinement_artwork(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
             )
             if plan.get("steps"):
-                return plan, f"Ollama ({config.ollama_model}) Pass {loop_iteration}/{total_iterations}"
+                return wrap_plan(plan, f"Ollama ({config.ollama_model}) Pass {loop_iteration}/{total_iterations}")
         except Exception as e:
             logger.warning("Ollama refinement composition failed: %s", e)
 
@@ -2088,7 +2209,7 @@ def plan_refinement_artwork(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
             )
             if plan.get("steps"):
-                return plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}"
+                return wrap_plan(plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}")
         except Exception as e:
             logger.warning("Gemini refinement composition failed: %s", e)
 
@@ -2099,7 +2220,7 @@ def plan_refinement_artwork(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
             )
             if plan.get("steps"):
-                return plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}"
+                return wrap_plan(plan, f"OpenAI ({config.openai_model}) Pass {loop_iteration}/{total_iterations}")
         except Exception as e:
             logger.warning("OpenAI refinement composition failed: %s", e)
 
@@ -2116,6 +2237,6 @@ def plan_refinement_artwork(
         total_iterations=total_iterations,
         model="built-in",
     )
-    return plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})"
+    return wrap_plan(plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})")
 
 
