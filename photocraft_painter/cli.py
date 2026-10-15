@@ -277,7 +277,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
         if user_input.startswith(("/model", "/models")):
             parts = user_input.split(maxsplit=1)
             choices = get_all_model_choices(config.ollama_host)
-            current_active = config.ollama_model if config.provider == "ollama" else config.openai_model
+            current_active = config.active_model
 
             if len(parts) > 1:
                 arg = parts[1].strip()
@@ -286,6 +286,8 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                     config.provider = new_provider
                     if new_provider == "ollama":
                         config.ollama_model = new_model
+                    elif new_provider in ("gemini", "google"):
+                        config.gemini_model = new_model
                     else:
                         config.openai_model = new_model
 
@@ -293,7 +295,12 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                         f"[bold green]✓[/] Active model switched to: [bold cyan]{new_model}[/] "
                         f"[dim](Provider: {new_provider.upper()})[/]\n"
                     )
-                    if new_provider == "openai" and not config.openai_api_key:
+                    if new_provider in ("gemini", "google") and not config.gemini_api_key:
+                        console.print(
+                            "[yellow]⚠ Note: GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set. "
+                            "Google Gemini requests may fail unless configured.[/]\n"
+                        )
+                    elif new_provider == "openai" and not config.openai_api_key:
                         console.print(
                             "[yellow]⚠ Note: OPENAI_API_KEY environment variable is not set. "
                             "Cloud API requests may fail unless configured.[/]\n"
@@ -322,6 +329,8 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                         config.provider = new_provider
                         if new_provider == "ollama":
                             config.ollama_model = new_model
+                        elif new_provider in ("gemini", "google"):
+                            config.gemini_model = new_model
                         else:
                             config.openai_model = new_model
 
@@ -329,7 +338,12 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                             f"[bold green]✓[/] Active model switched to: [bold cyan]{new_model}[/] "
                             f"[dim](Provider: {new_provider.upper()})[/]\n"
                         )
-                        if new_provider == "openai" and not config.openai_api_key:
+                        if new_provider in ("gemini", "google") and not config.gemini_api_key:
+                            console.print(
+                                "[yellow]⚠ Note: GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set. "
+                                "Google Gemini requests may fail unless configured.[/]\n"
+                            )
+                        elif new_provider == "openai" and not config.openai_api_key:
                             console.print(
                                 "[yellow]⚠ Note: OPENAI_API_KEY environment variable is not set. "
                                 "Cloud API requests may fail unless configured.[/]\n"
@@ -427,8 +441,14 @@ async def async_main(args: argparse.Namespace) -> None:
     if not provider:
         if args.model and any(args.model.lower().startswith(p) for p in ("gpt-", "o1-", "o3-")):
             provider = "openai"
+        elif args.model and "gemini" in args.model.lower():
+            provider = "gemini"
         else:
             provider = os.getenv("PAINTER_PROVIDER") or "ollama"
+
+    gemini_model = getattr(args, "gemini_model", None) or (args.model if provider in ("gemini", "google") else (os.getenv("GEMINI_MODEL") or "gemini-3.8-flash"))
+    openai_model = args.openai_model or (args.model if provider == "openai" else (os.getenv("OPENAI_MODEL") or "gpt-4o-mini"))
+    ollama_model = args.model or (os.getenv("OLLAMA_MODEL") or "ornith-1.5:35b")
 
     config = PainterConfig(
         control_port=args.port,
@@ -438,10 +458,13 @@ async def async_main(args: argparse.Namespace) -> None:
         loop=args.loop,
         provider=provider,
         ollama_host=args.ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434",
-        ollama_model=args.model or os.getenv("OLLAMA_MODEL") or "ornith-1.5:35b",
+        ollama_model=ollama_model,
         openai_api_key=args.api_key or os.getenv("OPENAI_API_KEY"),
         openai_base_url=args.base_url or os.getenv("OPENAI_BASE_URL"),
-        openai_model=args.openai_model or (args.model if provider == "openai" else "gpt-4o-mini"),
+        openai_model=openai_model,
+        gemini_api_key=getattr(args, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
+        gemini_base_url=getattr(args, "gemini_base_url", None) or os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai/",
+        gemini_model=gemini_model,
     )
 
     # Check if PhotoCraft desktop is running
@@ -521,12 +544,15 @@ def main() -> None:
         help="Refinement loop count 1 to 5 (default: 1; values 2-5 re-submit rendered canvas PNG back to AI for iterative refinement)",
     )
     parser.add_argument("--launch", action="store_true", help="Automatically launch PhotoCraft if not already running")
-    parser.add_argument("--provider", type=str, choices=["ollama", "openai"], default="ollama", help="AI provider (default: ollama)")
-    parser.add_argument("--model", type=str, default="ornith-1.5:35b", help="Ollama model name (default: ornith-1.5:35b)")
+    parser.add_argument("--provider", type=str, choices=["ollama", "openai", "gemini", "google"], default=None, help="AI provider (default: auto/ollama)")
+    parser.add_argument("--model", type=str, default=None, help="Model name tag (e.g. ornith-1.5:35b, gemini-4-argon, gemini-3.8-flash, gpt-4o-mini)")
     parser.add_argument("--ollama-host", type=str, default="http://127.0.0.1:11434", help="Ollama host URL (default: http://127.0.0.1:11434)")
     parser.add_argument("--api-key", type=str, help="OpenAI API key (if using --provider openai)")
     parser.add_argument("--base-url", type=str, help="OpenAI base URL (if using --provider openai)")
     parser.add_argument("--openai-model", type=str, default="gpt-4o-mini", help="OpenAI model name")
+    parser.add_argument("--gemini-api-key", type=str, help="Google/Gemini API key (if using --provider gemini)")
+    parser.add_argument("--gemini-base-url", type=str, help="Gemini base URL (default: https://generativelanguage.googleapis.com/v1beta/openai/)")
+    parser.add_argument("--gemini-model", type=str, default="gemini-3.8-flash", help="Gemini model name (default: gemini-3.8-flash)")
 
     args = parser.parse_args()
     try:

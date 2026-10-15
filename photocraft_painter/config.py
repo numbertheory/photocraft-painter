@@ -97,9 +97,22 @@ class PainterConfig:
         default_factory=lambda: os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     )
 
+    # Google Gemini settings (defaults to Google's official OpenAI-compatible endpoint)
+    gemini_api_key: str | None = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    )
+    gemini_base_url: str | None = field(
+        default_factory=lambda: os.getenv("GEMINI_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    gemini_model: str = field(
+        default_factory=lambda: os.getenv("GEMINI_MODEL") or "gemini-3.8-flash"
+    )
+
     @property
     def active_model(self) -> str:
         """Return the current active model name based on provider."""
+        if self.provider in ("gemini", "google"):
+            return self.gemini_model
         if self.provider == "openai":
             return self.openai_model
         return self.ollama_model

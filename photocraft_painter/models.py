@@ -146,6 +146,24 @@ SUGGESTED_LIBRARY_MODELS: list[ModelChoice] = [
         category="Cloud",
         provider="openai",
     ),
+    ModelChoice(
+        name="gemini-4-argon",
+        description="Google Gemini 4 Argon next-generation multimodal model (Vision-capable)",
+        category="Cloud",
+        provider="gemini",
+    ),
+    ModelChoice(
+        name="gemini-3.8-flash",
+        description="Google Gemini 3.8 Flash high-speed multimodal cloud model (Vision-capable)",
+        category="Cloud",
+        provider="gemini",
+    ),
+    ModelChoice(
+        name="gemini-2.5-flash",
+        description="Google Gemini 2.5 Flash high-speed multimodal cloud model (Vision-capable)",
+        category="Cloud",
+        provider="gemini",
+    ),
 ]
 
 
@@ -273,21 +291,35 @@ def resolve_model_selection(
             return selected.name, selected.provider
         raise ValueError(f"Invalid model number {idx}. Choose between 1 and {len(choices)}.")
 
-    # 2. Exact match in available choices
+    # 2. Match in available choices (exact, normalized spaces/hyphens)
     lower_cleaned = cleaned.lower()
     for m in choices:
-        if m.name.lower() == lower_cleaned:
+        m_lower = m.name.lower()
+        if m_lower == lower_cleaned:
+            return m.name, m.provider
+        if m_lower.replace("-", " ") == lower_cleaned.replace("-", " "):
+            return m.name, m.provider
+        if m_lower.replace("-", "") == lower_cleaned.replace(" ", "").replace("-", ""):
             return m.name, m.provider
 
     # 3. Provider prefix overrides
     if lower_cleaned.startswith("openai/"):
         return cleaned[7:].strip(), "openai"
+    if lower_cleaned.startswith("gemini/"):
+        return cleaned[7:].strip(), "gemini"
+    if lower_cleaned.startswith("google/"):
+        return cleaned[7:].strip(), "gemini"
     if lower_cleaned.startswith("ollama/"):
         return cleaned[7:].strip(), "ollama"
 
-    # 4. Known OpenAI model naming
+    # 4. Known cloud model naming
     if any(lower_cleaned.startswith(p) for p in ("gpt-", "o1-", "o3-")):
         return cleaned, "openai"
+    if "argon" in lower_cleaned and "gemini" not in lower_cleaned:
+        return "gemini-4-argon", "gemini"
+    if "gemini" in lower_cleaned:
+        normalized = cleaned.strip().replace(" ", "-")
+        return normalized, "gemini"
 
     # 5. Default to Ollama with the given model name
     return cleaned, "ollama"

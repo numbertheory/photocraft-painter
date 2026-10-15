@@ -445,6 +445,37 @@ def test_plan_artwork_provider_routing():
     assert "Rubber Duck" in plan["title"]
 
 
+def test_plan_artwork_gemini_routing(monkeypatch):
+    from unittest.mock import MagicMock
+    import photocraft_painter.composer as composer
+
+    mock_compose = MagicMock(return_value={"title": "Gemini Art", "steps": [{"cmd": "paint.stroke"}]})
+    monkeypatch.setattr(composer, "compose_with_gemini", mock_compose)
+
+    cfg = PainterConfig(provider="gemini", gemini_api_key="fake-key", gemini_model="gemini-3.8-flash")
+    plan, src = composer.plan_artwork("a starry sky", cfg)
+    assert "Gemini (gemini-3.8-flash)" in src
+    assert plan["title"] == "Gemini Art"
+    mock_compose.assert_called_once()
+
+
+def test_plan_refinement_gemini_routing(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+    import photocraft_painter.composer as composer
+
+    mock_compose_refine = MagicMock(return_value={"title": "Gemini Refine", "steps": [{"cmd": "paint.stroke"}], "critique": "Looks great"})
+    monkeypatch.setattr(composer, "compose_refinement_with_gemini", mock_compose_refine)
+
+    dummy_png = tmp_path / "test.png"
+    dummy_png.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    cfg = PainterConfig(provider="gemini", gemini_api_key="fake-key", gemini_model="gemini-3.8-flash")
+    plan, src = composer.plan_refinement_artwork("a starry sky", cfg, current_image=dummy_png, loop_iteration=1, total_iterations=2)
+    assert "Gemini (gemini-3.8-flash) Pass 1/2" in src
+    assert plan["title"] == "Gemini Refine"
+    mock_compose_refine.assert_called_once()
+
+
 def test_parse_prompt_and_images_no_images():
     prompt, images = parse_prompt_and_images("a rubber duck in water")
     assert prompt == "a rubber duck in water"

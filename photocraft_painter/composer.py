@@ -1377,6 +1377,120 @@ def compose_with_openai(
     return densify_artwork_plan(plan, detail_level=detail, style=config.style)
 
 
+def compose_with_gemini(
+    prompt: str,
+    config: PainterConfig,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Generate drawing steps using Google Gemini via its official OpenAI-compatible endpoint."""
+    import base64
+    from openai import OpenAI
+
+    api_key = config.gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or config.openai_api_key or "sk-dummy"
+    base_url = config.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+    )
+    style_preset = get_style(config.style)
+    detail = max(1, min(config.detail_level, 25))
+    detail_info = get_detail_guidance(detail)
+
+    is_portrait = is_portrait_or_face_prompt(prompt, images)
+    is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
+    style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+    if is_portrait or images:
+        style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
+    if is_geometric:
+        style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+
+    geom_hint = (
+        "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
+        if is_geometric
+        else ""
+    )
+
+    if images:
+        text_instruction = (
+            f"Visual reference image{'s have' if len(images) > 1 else ' has'} been provided.\n"
+            f"Carefully study the shapes, anatomy, subject, composition, and colors of the reference.\n"
+            f"Create an expressive artist illustration inspired by it for '{prompt}' on an {width}x{height} canvas.\n"
+            f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+            f"Color Mood: {style_preset.color_mood}\n"
+            f"Requested Detail: {detail_info}\n"
+            f"{geom_hint}"
+            "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+        )
+        content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_instruction}]
+        for p in images:
+            b64_data = base64.b64encode(p.read_bytes()).decode("utf-8")
+            ext = p.suffix.lstrip(".").lower() or "png"
+            if ext == "jpg":
+                ext = "jpeg"
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/{ext};base64,{b64_data}"},
+            })
+        user_msg: dict[str, Any] = {"role": "user", "content": content_parts}
+    else:
+        user_msg = {
+            "role": "user",
+            "content": (
+                f"Create an expressive artist illustration for '{prompt}' on an {width}x{height} canvas.\n"
+                f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+                f"Color Mood: {style_preset.color_mood}\n"
+                f"Requested Detail: {detail_info}\n"
+                f"{geom_hint}"
+                "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
+            ),
+        }
+
+    gemini_model = (config.gemini_model or "gemini-3.8-flash").strip().replace(" ", "-")
+
+    response = client.chat.completions.create(
+        model=gemini_model,
+        messages=[
+            {"role": "system", "content": style_system},
+            user_msg,
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.35,
+    )
+
+    content = response.choices[0].message.content or "{}"
+    data = extract_json_from_response(content)
+    raw_steps = data.get("steps") or []
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
+
+    base_title = data.get("title") or prompt.title()
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=gemini_model)
+
+    bg_fallback = (
+        "#fdfefe" if style_preset.id == "sketchy" else
+        "#111822" if style_preset.id == "abstract" else
+        "#16122c" if style_preset.id == "dreamlike" else
+        "#1c1917" if style_preset.id == "cubism" else
+        "#f8f9fa"
+    )
+
+    plan = {
+        "title": title,
+        "background": normalize_color(data.get("background")) or bg_fallback,
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": gemini_model.replace(":", "-").replace("/", "-"),
+        "steps": normalized_steps,
+    }
+    return densify_artwork_plan(plan, detail_level=detail, style=config.style)
+
+
 def plan_artwork(
     prompt: str,
     config: PainterConfig,
@@ -1384,7 +1498,7 @@ def plan_artwork(
     height: int = 800,
     images: list[Path] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Plan drawing steps for a prompt. Honors config.provider (ollama/openai) and falls back to procedural."""
+    """Plan drawing steps for a prompt. Honors config.provider (ollama/openai/gemini) and falls back to procedural."""
     if images is None:
         clean_text, extracted_images = parse_prompt_and_images(prompt)
         prompt = clean_text or (
@@ -1404,7 +1518,16 @@ def plan_artwork(
         plan = densify_artwork_plan(plan, detail_level=detail, style=config.style)
         return plan, f"Built-in Composer [{style_preset.name}] (Detail {detail}/25)"
 
-    # 1. If OpenAI provider is requested
+    # 1. If Gemini provider is requested
+    if config.provider in ("gemini", "google"):
+        try:
+            plan = compose_with_gemini(prompt, config, width, height, images=images)
+            if plan.get("steps"):
+                return plan, f"Gemini ({config.gemini_model})"
+        except Exception as e:
+            logger.warning("Gemini composition failed: %s", e)
+
+    # 2. If OpenAI provider is requested
     if config.provider == "openai":
         try:
             plan = compose_with_openai(prompt, config, width, height, images=images)
@@ -1413,8 +1536,8 @@ def plan_artwork(
         except Exception as e:
             logger.warning("OpenAI composition failed: %s", e)
 
-    # 2. Try Ollama (Default or secondary)
-    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url):
+    # 3. Try Ollama (Default or secondary)
+    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url and not config.gemini_api_key):
         try:
             plan = compose_with_ollama(prompt, config, width, height, images=images)
             if plan.get("steps"):
@@ -1422,7 +1545,16 @@ def plan_artwork(
         except Exception as e:
             logger.warning("Ollama composition failed: %s", e)
 
-    # 3. Try OpenAI as secondary if not already tried and keys are present
+    # 4. Try Gemini as secondary if keys are present and not already tried
+    if config.provider not in ("gemini", "google") and config.gemini_api_key:
+        try:
+            plan = compose_with_gemini(prompt, config, width, height, images=images)
+            if plan.get("steps"):
+                return plan, f"Gemini ({config.gemini_model})"
+        except Exception as e:
+            logger.warning("Gemini composition failed: %s", e)
+
+    # 5. Try OpenAI as secondary if not already tried and keys are present
     if config.provider != "openai" and (config.openai_api_key or config.openai_base_url):
         try:
             plan = compose_with_openai(prompt, config, width, height, images=images)
@@ -1782,6 +1914,106 @@ def compose_refinement_with_openai(
     }
 
 
+def compose_refinement_with_gemini(
+    prompt: str,
+    config: PainterConfig,
+    current_image: Path,
+    loop_iteration: int = 1,
+    total_iterations: int = 1,
+    width: int = 800,
+    height: int = 800,
+    images: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Generate targeted refinement brushstrokes using Google Gemini via OpenAI-compatible endpoint."""
+    import base64
+    from openai import OpenAI
+
+    api_key = config.gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or config.openai_api_key or "sk-dummy"
+    base_url = config.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+    )
+    style_preset = get_style(config.style)
+    detail = max(1, min(config.detail_level, 25))
+
+    phase_guidance = get_refinement_phase_guidance(loop_iteration, total_iterations, style_preset.id)
+
+    user_text = (
+        f"Here is the rendered PNG of the active drawing in progress on a {width}x{height} canvas.\n"
+        f"Intended target prompt: '{prompt}'\n"
+        f"Artistic Style: {style_preset.name.upper()} - {style_preset.description}\n"
+        f"Color Mood: {style_preset.color_mood}\n"
+        f"Refinement Loop Pass: {loop_iteration} of {total_iterations}\n\n"
+        f"{phase_guidance}\n\n"
+        "STRICT BAN ON SHADOW SPOTS: Do NOT emit rows of short dashed strokes, spots, or messy speckles across the body! "
+        "Every stroke must serve a clear purpose (solid opaque base repair, continuous form shadow, clean boundary inking, or crisp catchlights).\n"
+        "Output strictly valid JSON with 'critique' and 'steps'."
+    )
+
+    content_parts: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+
+    # In-progress image
+    b64_in_prog = base64.b64encode(current_image.read_bytes()).decode("utf-8")
+    content_parts.append({
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{b64_in_prog}"},
+    })
+
+    # Optional original references
+    if images:
+        for p in images:
+            if p.exists() and p != current_image:
+                b64_data = base64.b64encode(p.read_bytes()).decode("utf-8")
+                ext = p.suffix.lstrip(".").lower() or "png"
+                if ext == "jpg":
+                    ext = "jpeg"
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/{ext};base64,{b64_data}"},
+                })
+
+    style_system = f"{REFINEMENT_SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
+    gemini_model = (config.gemini_model or "gemini-3.8-flash").strip().replace(" ", "-")
+
+    response = client.chat.completions.create(
+        model=gemini_model,
+        messages=[
+            {"role": "system", "content": style_system},
+            {"role": "user", "content": content_parts},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.35,
+    )
+
+    content = response.choices[0].message.content or "{}"
+    data = extract_json_from_response(content)
+    raw_steps = data.get("steps") or []
+    normalized_steps: list[dict[str, Any]] = []
+    for st in raw_steps:
+        if isinstance(st, dict):
+            normalized_steps.extend(expand_step(st, width, height))
+
+    critique = data.get("critique") or data.get("problems") or (
+        f"Refinement Pass {loop_iteration}: Enhancing contrast, defining contours, and adding highlights."
+    )
+
+    base_title = data.get("title") or f"{prompt.title()} Refine {loop_iteration}"
+    title = format_document_title(base_title, style=config.style, detail_level=detail, model=gemini_model)
+
+    return {
+        "title": title,
+        "critique": str(critique),
+        "width": width,
+        "height": height,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": gemini_model.replace(":", "-").replace("/", "-"),
+        "steps": normalized_steps,
+        "is_refinement": True,
+    }
+
+
 def plan_refinement_artwork(
     prompt: str,
     config: PainterConfig,
@@ -1816,7 +2048,18 @@ def plan_refinement_artwork(
         )
         return plan, f"Built-in Refiner [{style_preset.name}] (Pass {loop_iteration}/{total_iterations})"
 
-    # 1. If OpenAI provider is requested
+    # 1. If Gemini provider is requested
+    if config.provider in ("gemini", "google"):
+        try:
+            plan = compose_refinement_with_gemini(
+                prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
+            )
+            if plan.get("steps"):
+                return plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}"
+        except Exception as e:
+            logger.warning("Gemini refinement composition failed: %s", e)
+
+    # 2. If OpenAI provider is requested
     if config.provider == "openai":
         try:
             plan = compose_refinement_with_openai(
@@ -1827,8 +2070,8 @@ def plan_refinement_artwork(
         except Exception as e:
             logger.warning("OpenAI refinement composition failed: %s", e)
 
-    # 2. Try Ollama (Default or secondary)
-    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url):
+    # 3. Try Ollama (Default or secondary)
+    if config.provider == "ollama" or (config.provider not in ("none", "fallback", "builtin") and not config.openai_api_key and not config.openai_base_url and not config.gemini_api_key):
         try:
             plan = compose_refinement_with_ollama(
                 prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
@@ -1838,7 +2081,18 @@ def plan_refinement_artwork(
         except Exception as e:
             logger.warning("Ollama refinement composition failed: %s", e)
 
-    # 3. Try OpenAI as secondary if not already tried and keys are present
+    # 4. Try Gemini as secondary if keys are present and not already tried
+    if config.provider not in ("gemini", "google") and config.gemini_api_key:
+        try:
+            plan = compose_refinement_with_gemini(
+                prompt, config, current_image, loop_iteration=loop_iteration, total_iterations=total_iterations, width=width, height=height, images=images
+            )
+            if plan.get("steps"):
+                return plan, f"Gemini ({config.gemini_model}) Pass {loop_iteration}/{total_iterations}"
+        except Exception as e:
+            logger.warning("Gemini refinement composition failed: %s", e)
+
+    # 5. Try OpenAI as secondary if not already tried and keys are present
     if config.provider != "openai" and (config.openai_api_key or config.openai_base_url):
         try:
             plan = compose_refinement_with_openai(

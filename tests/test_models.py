@@ -22,6 +22,9 @@ def test_suggested_library_models_structure():
     assert "qwen2.5:32b" in names
     assert "deepseek-r1:32b" in names
     assert "gpt-4o-mini" in names
+    assert "gemini-4-argon" in names
+    assert "gemini-3.8-flash" in names
+    assert "gemini-2.5-flash" in names
     assert "llama3.2-vision:11b" in names
     assert "qwen2.5-vl:7b" in names
 
@@ -29,7 +32,7 @@ def test_suggested_library_models_structure():
         assert m.name
         assert m.description
         assert m.category in ("Library", "Cloud", "Local")
-        assert m.provider in ("ollama", "openai")
+        assert m.provider in ("ollama", "openai", "gemini")
 
 
 def test_format_bytes():
@@ -88,10 +91,46 @@ def test_resolve_model_selection_by_name():
     assert name_cloud == "gpt-4o"
     assert prov_cloud == "openai"
 
+    # Google Gemini cloud model (exact and space-separated)
+    choices_with_gemini = choices + [
+        ModelChoice(name="gemini-3.8-flash", description="Gemini 3.8 Flash", category="Cloud", provider="gemini"),
+    ]
+    name_gem, prov_gem = resolve_model_selection("gemini-3.8-flash", choices_with_gemini)
+    assert name_gem == "gemini-3.8-flash"
+    assert prov_gem == "gemini"
+
+    name_gem_sp, prov_gem_sp = resolve_model_selection("gemini 3.8 flash", choices_with_gemini)
+    assert name_gem_sp == "gemini-3.8-flash"
+    assert prov_gem_sp == "gemini"
+
+    # Gemini 4 Argon
+    choices_with_argon = choices_with_gemini + [
+        ModelChoice(name="gemini-4-argon", description="Gemini 4 Argon", category="Cloud", provider="gemini"),
+    ]
+    name_arg, prov_arg = resolve_model_selection("gemini-4-argon", choices_with_argon)
+    assert name_arg == "gemini-4-argon"
+    assert prov_arg == "gemini"
+
+    name_arg_sp, prov_arg_sp = resolve_model_selection("gemini 4 argon", choices_with_argon)
+    assert name_arg_sp == "gemini-4-argon"
+    assert prov_arg_sp == "gemini"
+
+    name_arg_short, prov_arg_short = resolve_model_selection("argon", choices_with_argon)
+    assert name_arg_short == "gemini-4-argon"
+    assert prov_arg_short == "gemini"
+
     # Prefixed explicit providers
     name_pre, prov_pre = resolve_model_selection("openai/my-fine-tuned", choices)
     assert name_pre == "my-fine-tuned"
     assert prov_pre == "openai"
+
+    name_gem_pre, prov_gem_pre = resolve_model_selection("gemini/custom-gemini-preview", choices)
+    assert name_gem_pre == "custom-gemini-preview"
+    assert prov_gem_pre == "gemini"
+
+    name_goo_pre, prov_goo_pre = resolve_model_selection("google/custom-gemini-preview", choices)
+    assert name_goo_pre == "custom-gemini-preview"
+    assert prov_goo_pre == "gemini"
 
     name_oll, prov_oll = resolve_model_selection("ollama/custom-tag:latest", choices)
     assert name_oll == "custom-tag:latest"
