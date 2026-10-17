@@ -524,3 +524,74 @@ async def test_play_live_animation_restores_layers_on_secondary_interrupt():
     assert 0 in restored_layers
 
 
+def test_animation_keyframe_instruction_presence():
+    """Verify ANIMATION_KEYFRAME_INSTRUCTION is defined and contains critical single-subject rules."""
+    from photocraft_painter.composer import ANIMATION_KEYFRAME_INSTRUCTION
+
+    assert "SINGLE INITIAL SUBJECT ONLY" in ANIMATION_KEYFRAME_INSTRUCTION
+    assert "ONLY ONE" in ANIMATION_KEYFRAME_INSTRUCTION
+    assert "NEVER draw multiple stages of the bounce" in ANIMATION_KEYFRAME_INSTRUCTION
+    assert "motion path arcs" in ANIMATION_KEYFRAME_INSTRUCTION
+
+
+def test_extract_mobile_feature_strokes_locomotion():
+    """Verify for locomotion/bounce prompts, the entire subject is marked mobile, not just 30%."""
+    strokes = [
+        {"cmd": "paint.stroke", "params": {"name": "Background Ground Floor Line", "points": [[0, 700], [800, 700]]}},
+        {"cmd": "paint.stroke", "params": {"name": "Ball Outline", "points": [[100, 200], [150, 250], [100, 200]]}},
+        {"cmd": "paint.stroke", "params": {"name": "Ball Shading", "points": [[110, 210], [140, 240]]}},
+        {"cmd": "paint.stroke", "params": {"name": "Ball Specular Highlight", "points": [[120, 205], [125, 205]]}},
+    ]
+
+    mobile, stationary = extract_mobile_feature_strokes(strokes, motion_type="a ball bouncing across the screen")
+    assert len(stationary) == 1
+    assert "Ground" in stationary[0]["params"]["name"]
+
+    # All 3 ball strokes are mobile
+    assert len(mobile) == 3
+    mobile_names = [s["params"]["name"] for s in mobile]
+    assert "Ball Outline" in mobile_names
+    assert "Ball Shading" in mobile_names
+    assert "Ball Specular Highlight" in mobile_names
+
+
+def test_bouncing_ball_across_screen_trajectory():
+    """Verify animation for 'a ball bouncing across the screen' traverses horizontally with parabolic bounce arcs."""
+    cfg = PainterConfig(provider="none", steps=12, detail_level=5)
+    plan, _ = plan_animation("a ball bouncing across the screen", cfg)
+
+    assert plan["is_animation"] is True
+    assert plan["frames_count"] == 12
+    frames = plan["frames"]
+    assert len(frames) == 12
+
+    # Check horizontal progression from Frame 1 to Frame 12
+    first_frame_draw = [
+        s for s in frames[0]["steps"]
+        if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+    ]
+    last_frame_draw = [
+        s for s in frames[-1]["steps"]
+        if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+    ]
+    assert first_frame_draw and last_frame_draw
+
+    # Compare X coordinates
+    first_x = first_frame_draw[0]["params"]["points"][0][0]
+    last_x = last_frame_draw[0]["params"]["points"][0][0]
+    # The ball must have moved across the screen horizontally (at least 150 px)
+    assert abs(last_x - first_x) >= 150.0, f"Ball did not travel across screen: start {first_x}, end {last_x}"
+
+    # Verify broad erase strokes are present in frame 2..N
+    for f in frames[1:]:
+        erases = [
+            s for s in f["steps"]
+            if (s.get("cmd") or s.get("id")) == "paint.stroke" and s.get("params", {}).get("erase") is True
+        ]
+        assert len(erases) >= 2, f"{f['name']} must contain broad coverage erase sweeps"
+        # Verify broad brush size
+        max_erase_size = max(float(s["params"].get("size", 0)) for s in erases)
+        assert max_erase_size >= 40.0, f"Eraser brush size {max_erase_size} too small to clean previous position"
+
+
+

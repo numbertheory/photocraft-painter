@@ -117,6 +117,38 @@ def enforce_stroke_parity(
     return result
 
 
+BACKGROUND_KEYWORDS = (
+    "background", "ground", "floor", "horizon", "sky", "cloud",
+    "backdrop", "surface", "table", "road", "street", "platform",
+    "court", "field", "wall", "room", "baseline", "shadow on ground",
+)
+
+PART_KEYWORDS = (
+    "eye", "pupil", "lid", "blink", "mouth", "lip", "smile", "beak", "bill",
+    "wing", "arm", "hand", "wave", "splash", "ripple", "tail", "bob", "head",
+    "water splash", "bubble", "gleam", "highlight", "crest", "oscillation",
+)
+
+
+def get_strokes_bounds(strokes: list[dict[str, Any]]) -> tuple[float, float, float, float]:
+    """Calculate (min_x, min_y, max_x, max_y) bounding box for a set of strokes."""
+    all_pts: list[tuple[float, float]] = []
+    for s in strokes:
+        pts = s.get("params", {}).get("points", [])
+        if isinstance(pts, list):
+            for p in pts:
+                if isinstance(p, (list, tuple)) and len(p) >= 2:
+                    all_pts.append((float(p[0]), float(p[1])))
+    if not all_pts:
+        return 200.0, 200.0, 400.0, 400.0
+    return (
+        min(p[0] for p in all_pts),
+        min(p[1] for p in all_pts),
+        max(p[0] for p in all_pts),
+        max(p[1] for p in all_pts),
+    )
+
+
 def extract_mobile_feature_strokes(
     strokes: list[dict[str, Any]],
     motion_type: str = "bounce",
@@ -125,30 +157,51 @@ def extract_mobile_feature_strokes(
 
     Returns: (mobile_strokes, stationary_strokes)
     """
-    mobile: list[dict[str, Any]] = []
+    if not strokes:
+        return [], []
+
+    prompt_lower = str(motion_type or "").lower()
+    is_locomotion = any(
+        kw in prompt_lower
+        for kw in (
+            "across", "bounce", "bouncing", "ball", "walk", "walking", "run", "running",
+            "fly", "flying", "jump", "jumping", "swim", "swimming", "roll", "rolling",
+            "travel", "move", "moving", "slide", "sliding", "glide", "gliding",
+            "hop", "hopping", "drive", "driving", "chase", "chasing",
+        )
+    )
+
     stationary: list[dict[str, Any]] = []
+    subject_strokes: list[dict[str, Any]] = []
 
     for s in strokes:
         name = str(s.get("params", {}).get("name", "")).lower()
-        # Elements that typically move in animations
-        is_mobile = any(
-            kw in name
-            for kw in (
-                "eye", "pupil", "lid", "blink", "mouth", "lip", "smile", "beak", "bill",
-                "wing", "arm", "hand", "wave", "splash", "ripple", "tail", "bob", "head",
-                "water splash", "bubble", "gleam", "highlight", "crest", "oscillation",
-            )
-        )
-        if is_mobile:
+        if any(bg in name for bg in BACKGROUND_KEYWORDS):
+            stationary.append(s)
+        else:
+            subject_strokes.append(s)
+
+    if is_locomotion or not subject_strokes:
+        # Whole subject moves across/bounces; only background stays stationary
+        mobile = subject_strokes if subject_strokes else list(strokes)
+        stationary = [s for s in strokes if s not in mobile]
+        return mobile, stationary
+
+    # For localized in-place motions (e.g. blinking, smiling, waving)
+    mobile = []
+    body_stationary = []
+    for s in subject_strokes:
+        name = str(s.get("params", {}).get("name", "")).lower()
+        if any(kw in name for kw in PART_KEYWORDS):
             mobile.append(s)
         else:
-            stationary.append(s)
+            body_stationary.append(s)
 
-    # If nothing was explicitly tagged as mobile, pick the upper 30% of strokes as foreground mobile features
-    if not mobile and strokes:
-        split_idx = max(1, int(len(strokes) * 0.7))
-        stationary = strokes[:split_idx]
-        mobile = strokes[split_idx:]
+    if not mobile:
+        mobile = subject_strokes
+        stationary = [s for s in strokes if s not in mobile]
+    else:
+        stationary.extend(body_stationary)
 
     return mobile, stationary
 
@@ -159,6 +212,8 @@ def apply_motion_transform(
     dy: float,
     scale_y: float = 1.0,
     origin_y: float = 400.0,
+    scale_x: float = 1.0,
+    origin_x: float = 400.0,
 ) -> dict[str, Any]:
     """Return a new stroke with transformed coordinates."""
     transformed = copy.deepcopy(stroke)
@@ -168,7 +223,7 @@ def apply_motion_transform(
 
     for p in pts:
         if isinstance(p, (list, tuple)) and len(p) >= 2:
-            x = float(p[0]) + dx
+            x = (float(p[0]) - origin_x) * scale_x + origin_x + dx
             y = (float(p[1]) - origin_y) * scale_y + origin_y + dy
             pr = float(p[2]) if len(p) >= 3 else 0.8
             new_pts.append([round(x, 1), round(y, 1), round(pr, 2)])
@@ -178,18 +233,286 @@ def apply_motion_transform(
     return transformed
 
 
-def create_erase_stroke_from(stroke: dict[str, Any], expand_size: float = 1.3) -> dict[str, Any]:
+def create_erase_stroke_from(stroke: dict[str, Any], expand_size: float = 1.5) -> dict[str, Any]:
     """Create an erase stroke corresponding to a previous stroke."""
     erased = copy.deepcopy(stroke)
     params = erased.get("params", {})
     old_size = float(params.get("size") or 6.0)
     params["name"] = f"Erase: {params.get('name', 'Stroke')}"
     params["erase"] = True
-    params["size"] = min(300.0, max(2.0, old_size * expand_size))
+    params["size"] = min(300.0, max(4.0, old_size * expand_size))
     params["hardness"] = 1.0
     params["opacity"] = 1.0
     erased["params"] = params
     return erased
+
+
+def create_erase_strokes_covering(
+    prev_mobile_strokes: list[dict[str, Any]],
+    max_erase_count: int = 8,
+) -> list[dict[str, Any]]:
+    """Create erase strokes that cleanly and completely clear the previous mobile subject."""
+    if not prev_mobile_strokes:
+        return []
+
+    min_x, min_y, max_x, max_y = get_strokes_bounds(prev_mobile_strokes)
+    cx = (min_x + max_x) / 2.0
+    cy = (min_y + max_y) / 2.0
+    w = max_x - min_x
+    h = max_y - min_y
+    r = max(w, h) / 2.0
+    brush_size = max(50.0, min(250.0, r * 1.4))
+
+    # Broad coverage eraser sweeps covering the bounding box
+    sweeps = [
+        # Horizontal sweep through center
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Erase: Previous Subject Area (Horizontal)",
+                "points": [[round(min_x - 10.0, 1), round(cy, 1), 1.0], [round(max_x + 10.0, 1), round(cy, 1), 1.0]],
+                "size": round(brush_size, 1),
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "erase": True,
+            },
+        },
+        # Vertical sweep through center
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Erase: Previous Subject Area (Vertical)",
+                "points": [[round(cx, 1), round(min_y - 10.0, 1), 1.0], [round(cx, 1), round(max_y + 10.0, 1), 1.0]],
+                "size": round(brush_size, 1),
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "erase": True,
+            },
+        },
+        # Diagonal 1
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Erase: Previous Subject Area (Diagonal 1)",
+                "points": [[round(min_x, 1), round(min_y, 1), 1.0], [round(max_x, 1), round(max_y, 1), 1.0]],
+                "size": round(brush_size, 1),
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "erase": True,
+            },
+        },
+        # Diagonal 2
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Erase: Previous Subject Area (Diagonal 2)",
+                "points": [[round(min_x, 1), round(max_y, 1), 1.0], [round(max_x, 1), round(min_y, 1), 1.0]],
+                "size": round(brush_size, 1),
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "erase": True,
+            },
+        },
+    ]
+
+    individual_erases = [create_erase_stroke_from(s, expand_size=1.8) for s in prev_mobile_strokes]
+    combined = sweeps + individual_erases
+    return combined[:max(2, max_erase_count)]
+
+
+def build_animation_frames(
+    base_steps: list[dict[str, Any]],
+    prompt: str,
+    num_frames: int,
+    stroke_budget: int,
+    width: int = 800,
+    height: int = 800,
+) -> list[dict[str, Any]]:
+    """Generate multi-frame animation layers with clean previous-frame erasure and physics-based motion."""
+    frame_1_steps = enforce_stroke_parity(base_steps, stroke_budget, width, height)
+    frames: list[dict[str, Any]] = [
+        {
+            "frame_index": 1,
+            "name": "Frame 1",
+            "is_base": True,
+            "steps": frame_1_steps,
+            "stroke_count": count_brush_strokes(frame_1_steps),
+        }
+    ]
+
+    if num_frames <= 1:
+        return frames
+
+    base_strokes = [s for s in base_steps if (s.get("cmd") or s.get("id")) == "paint.stroke"]
+    mobile_strokes, stationary_strokes = extract_mobile_feature_strokes(base_strokes, prompt)
+    if not mobile_strokes:
+        mobile_strokes = list(base_strokes)
+
+    min_x, min_y, max_x, max_y = get_strokes_bounds(mobile_strokes)
+    cx = (min_x + max_x) / 2.0
+    cy = (min_y + max_y) / 2.0
+    bottom_y = max_y
+
+    prompt_lower = prompt.lower()
+    is_across = any(kw in prompt_lower for kw in ("across", "screen", "cross", "traverse", "left to right", "through"))
+    is_bounce = any(kw in prompt_lower for kw in ("bounce", "bouncing", "ball", "hop", "hopping", "rebound"))
+    is_walk = any(kw in prompt_lower for kw in ("walk", "walking", "run", "running", "step", "stride"))
+    is_blink = any(kw in prompt_lower for kw in ("blink", "blinking", "eye", "wink"))
+    is_wave = any(kw in prompt_lower for kw in ("wave", "waving", "wing", "hand", "arm", "tail"))
+
+    # Determine across-screen horizontal travel distance
+    if cx < 400.0:
+        total_dx = min(500.0, max(150.0, (float(width) - 100.0) - cx))
+    else:
+        total_dx = -min(500.0, max(150.0, cx - 100.0))
+
+    prev_mobile = copy.deepcopy(mobile_strokes)
+
+    for k in range(2, num_frames + 1):
+        t = float(k - 1) / float(num_frames - 1)
+        theta = 2.0 * math.pi * float(k - 1) / float(num_frames)
+
+        if is_bounce and is_across:
+            # Trajectory across screen with smooth bounce arcs
+            dx = round(t * total_dx, 1)
+            num_bounces = 2 if num_frames <= 12 else 3
+            # Inverted sine arc bounces
+            bounce_height = min(120.0, max(60.0, bottom_y - 120.0))
+            bounce_arc = abs(math.sin(math.pi * float(num_bounces) * t))
+            dy = -round(bounce_height * bounce_arc, 1)
+
+            # Squash & stretch: near ground impact squash, mid-air stretch
+            cycle = t * float(num_bounces)
+            tau = cycle - math.floor(cycle)
+            if tau < 0.12 or tau > 0.88:
+                squash_y = 0.72
+                squash_x = 1.25
+                orig_y = bottom_y
+            elif 0.18 <= tau <= 0.35 or 0.65 <= tau <= 0.82:
+                squash_y = 1.15
+                squash_x = 0.90
+                orig_y = cy
+            else:
+                squash_y = 1.0
+                squash_x = 1.0
+                orig_y = cy
+            orig_x = cx
+
+        elif is_walk and is_across:
+            dx = round(t * total_dx, 1)
+            dy = -round(12.0 * abs(math.sin(math.pi * 6.0 * t)), 1)
+            squash_y = 1.0 + 0.04 * math.sin(math.pi * 6.0 * t)
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = bottom_y
+
+        elif is_across:
+            dx = round(t * total_dx, 1)
+            dy = -round(15.0 * math.sin(2.0 * math.pi * 2.0 * t), 1)
+            squash_y = 1.0
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = cy
+
+        elif is_bounce and not is_across:
+            # Bouncing in place
+            dx = 0.0
+            tau = (1.0 - math.cos(theta)) / 2.0
+            dy = -round(80.0 * tau, 1)
+            if tau < 0.12:
+                squash_y = 0.72
+                squash_x = 1.25
+                orig_y = bottom_y
+            else:
+                squash_y = 1.10
+                squash_x = 0.95
+                orig_y = cy
+            orig_x = cx
+
+        elif is_walk and not is_across:
+            dx = round(16.0 * math.sin(theta), 1)
+            dy = -round(10.0 * abs(math.cos(theta)), 1)
+            squash_y = 1.0 + 0.05 * math.sin(2.0 * theta)
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = bottom_y
+
+        elif is_wave:
+            dx = round(15.0 * math.sin(theta), 1)
+            dy = -round(8.0 * math.cos(theta), 1)
+            squash_y = 1.0 + 0.05 * math.sin(theta)
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = cy
+
+        elif is_blink:
+            blink_amt = max(0.0, math.sin(theta))
+            dx = 0.0
+            dy = round(2.0 * blink_amt, 1)
+            squash_y = max(0.15, 1.0 - 0.85 * blink_amt)
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = cy
+
+        else:
+            dx = round(10.0 * math.sin(theta), 1)
+            dy = -round(14.0 * math.sin(theta), 1)
+            squash_y = 1.0 + 0.05 * math.cos(theta)
+            squash_x = 1.0
+            orig_x = cx
+            orig_y = cy
+
+        frame_k_steps: list[dict[str, Any]] = []
+
+        # Step A: Duplicate active layer from previous frame
+        frame_k_steps.append({
+            "cmd": "layer.duplicate",
+            "params": {"name": f"Frame {k}"},
+        })
+
+        # Step B: Erase previous frame's mobile positions completely
+        max_erase = max(4, min(12, stroke_budget // 3))
+        erase_strokes = create_erase_strokes_covering(prev_mobile, max_erase_count=max_erase)
+
+        # Step C: Redraw elements at new displaced coordinates
+        current_mobile: list[dict[str, Any]] = []
+        draw_strokes: list[dict[str, Any]] = []
+        for ms in mobile_strokes:
+            trans = apply_motion_transform(
+                ms,
+                dx=dx,
+                dy=dy,
+                scale_y=squash_y,
+                origin_y=orig_y,
+                scale_x=squash_x,
+                origin_x=orig_x,
+            )
+            trans.setdefault("params", {})["erase"] = False
+            current_mobile.append(trans)
+            draw_strokes.append(trans)
+
+        frame_k_steps.extend(erase_strokes)
+        frame_k_steps.extend(draw_strokes)
+
+        # Step D: Strictly balance strokes so stroke_count == stroke_budget!
+        frame_k_steps = enforce_stroke_parity(
+            frame_k_steps,
+            target_count=stroke_budget,
+            canvas_w=width,
+            canvas_h=height,
+        )
+
+        frames.append({
+            "frame_index": k,
+            "name": f"Frame {k}",
+            "is_base": False,
+            "steps": frame_k_steps,
+            "stroke_count": count_brush_strokes(frame_k_steps),
+        })
+
+        prev_mobile = current_mobile
+
+    return frames
 
 
 def plan_animation_fallback(
@@ -213,118 +536,14 @@ def plan_animation_fallback(
     if stroke_budget == 0:
         stroke_budget = max(10, detail * 10)
 
-    # Wrap Frame 1 steps:
-    # Ensure Frame 1 has exactly stroke_budget strokes
-    frame_1_steps = enforce_stroke_parity(base_steps, stroke_budget, width, height)
-
-    frames: list[dict[str, Any]] = [
-        {
-            "frame_index": 1,
-            "name": "Frame 1",
-            "is_base": True,
-            "steps": frame_1_steps,
-            "stroke_count": count_brush_strokes(frame_1_steps),
-        }
-    ]
-
-    if num_frames == 1:
-        return {
-            "title": base_plan.get("title", prompt),
-            "width": width,
-            "height": height,
-            "background": base_plan.get("background", "white"),
-            "frames_count": 1,
-            "strokes_per_frame": stroke_budget,
-            "frames": frames,
-            "steps": frame_1_steps,
-        }
-
-    # Identify mobile strokes for delta animation
-    mobile_strokes, stationary_strokes = extract_mobile_feature_strokes(base_strokes)
-    if not mobile_strokes:
-        mobile_strokes = base_strokes[-max(5, stroke_budget // 3):]
-
-    # Detect animation motion characteristics from prompt
-    prompt_lower = prompt.lower()
-    is_wave = any(k in prompt_lower for k in ("wave", "waving", "wing", "hand", "arm", "tail"))
-    is_blink = any(k in prompt_lower for k in ("blink", "blinking", "eye", "wink"))
-    is_walk = any(k in prompt_lower for k in ("walk", "walking", "run", "running", "step"))
-
-    prev_mobile = copy.deepcopy(mobile_strokes)
-
-    # 2. Generate Frames 2..N
-    for k in range(2, num_frames + 1):
-        # Progress phase 0..2pi for looping cycles
-        phase = 2.0 * math.pi * float(k - 1) / float(num_frames)
-
-        # Calculate subtle coordinate displacements (bounded to subtle delta, e.g. <= 25-35 px)
-        if is_wave:
-            dx = round(15.0 * math.sin(phase), 1)
-            dy = round(-8.0 * math.cos(phase), 1)
-            squash = 1.0 + 0.05 * math.sin(phase)
-        elif is_blink:
-            # Blink smoothly closes around midpoint
-            blink_amt = max(0.0, math.sin(phase))
-            dx = round(4.0 * math.cos(phase), 1)
-            dy = round(1.0 + 3.0 * blink_amt, 1)
-            squash = max(0.2, 1.0 - 0.7 * blink_amt)
-        elif is_walk:
-            dx = round(20.0 * math.sin(phase), 1)
-            dy = round(-10.0 * abs(math.cos(phase)), 1)
-            squash = 1.0 + 0.06 * math.sin(phase * 2)
-        else:
-            # Default: gentle bounce and floating bob (e.g. rubber duck or bouncing shape)
-            dx = round(6.0 * math.sin(phase), 1)
-            dy = round(-16.0 * math.sin(phase), 1)
-            squash = 1.0 + 0.06 * math.cos(phase)
-
-        frame_k_steps: list[dict[str, Any]] = []
-
-        # Step A: Duplicate active layer from previous frame
-        frame_k_steps.append({
-            "cmd": "layer.duplicate",
-            "params": {"name": f"Frame {k}"},
-        })
-
-        # Step B: Erase previous frame's mobile positions
-        # Take a subset of mobile strokes to erase (up to half of the budget)
-        erase_count = min(len(prev_mobile), max(3, stroke_budget // 3))
-        erase_subset = prev_mobile[:erase_count]
-        erase_strokes: list[dict[str, Any]] = []
-        for es in erase_subset:
-            erase_strokes.append(create_erase_stroke_from(es))
-
-        # Step C: Redraw elements at new displaced coordinates
-        current_mobile: list[dict[str, Any]] = []
-        draw_strokes: list[dict[str, Any]] = []
-        for ms in mobile_strokes:
-            trans = apply_motion_transform(ms, dx=dx, dy=dy, scale_y=squash)
-            # Ensure erase is False
-            trans.setdefault("params", {})["erase"] = False
-            current_mobile.append(trans)
-            draw_strokes.append(trans)
-
-        # Assemble frame steps
-        frame_k_steps.extend(erase_strokes)
-        frame_k_steps.extend(draw_strokes)
-
-        # Step D: Strictly balance strokes so stroke_count == stroke_budget!
-        frame_k_steps = enforce_stroke_parity(
-            frame_k_steps,
-            target_count=stroke_budget,
-            canvas_w=width,
-            canvas_h=height,
-        )
-
-        frames.append({
-            "frame_index": k,
-            "name": f"Frame {k}",
-            "is_base": False,
-            "steps": frame_k_steps,
-            "stroke_count": count_brush_strokes(frame_k_steps),
-        })
-
-        prev_mobile = current_mobile
+    frames = build_animation_frames(
+        base_steps=base_steps,
+        prompt=prompt,
+        num_frames=num_frames,
+        stroke_budget=stroke_budget,
+        width=width,
+        height=height,
+    )
 
     title = base_plan.get("title", prompt)
     clean_title = re.sub(r"\[\d+\s*Frames?\]", "", title, flags=re.IGNORECASE).strip()
@@ -339,6 +558,7 @@ def plan_animation_fallback(
         "frames_count": num_frames,
         "strokes_per_frame": stroke_budget,
         "frames": frames,
+        "steps": frames[0]["steps"],
     }
 
 
@@ -357,7 +577,6 @@ def plan_animation(
         return plan, source
 
     # Multi-frame animation mode
-    # For now, generate base via plan_artwork/fallback, then build delta frames
     try:
         base_plan, source = plan_artwork(prompt, config, width, height, images=images)
         base_steps = [normalize_step(s, width, height) for s in base_plan.get("steps", [])]
@@ -366,62 +585,14 @@ def plan_animation(
         if stroke_budget == 0:
             stroke_budget = max(10, config.detail_level * 10)
 
-        frame_1_steps = enforce_stroke_parity(base_steps, stroke_budget, width, height)
-        frames: list[dict[str, Any]] = [
-            {
-                "frame_index": 1,
-                "name": "Frame 1",
-                "is_base": True,
-                "steps": frame_1_steps,
-                "stroke_count": count_brush_strokes(frame_1_steps),
-            }
-        ]
-
-        # Generate subsequent frames with deltas
-        mobile_strokes, _ = extract_mobile_feature_strokes(base_strokes)
-        if not mobile_strokes:
-            mobile_strokes = base_strokes[-max(5, stroke_budget // 3):]
-
-        prev_mobile = copy.deepcopy(mobile_strokes)
-
-        for k in range(2, num_frames + 1):
-            phase = 2.0 * math.pi * float(k - 1) / float(num_frames)
-            dx = round(8.0 * math.sin(phase), 1)
-            dy = round(-14.0 * math.sin(phase), 1)
-            squash = 1.0 + 0.05 * math.cos(phase)
-
-            frame_k_steps: list[dict[str, Any]] = []
-            frame_k_steps.append({
-                "cmd": "layer.duplicate",
-                "params": {"name": f"Frame {k}"},
-            })
-
-            erase_count = min(len(prev_mobile), max(3, stroke_budget // 3))
-            for es in prev_mobile[:erase_count]:
-                frame_k_steps.append(create_erase_stroke_from(es))
-
-            current_mobile: list[dict[str, Any]] = []
-            for ms in mobile_strokes:
-                trans = apply_motion_transform(ms, dx=dx, dy=dy, scale_y=squash)
-                trans.setdefault("params", {})["erase"] = False
-                current_mobile.append(trans)
-                frame_k_steps.append(trans)
-
-            frame_k_steps = enforce_stroke_parity(
-                frame_k_steps,
-                target_count=stroke_budget,
-                canvas_w=width,
-                canvas_h=height,
-            )
-
-            frames.append({
-                "frame_index": k,
-                "name": f"Frame {k}",
-                "is_base": False,
-                "steps": frame_k_steps,
-                "stroke_count": count_brush_strokes(frame_k_steps),
-            })
-            prev_mobile = current_mobile
+        frames = build_animation_frames(
+            base_steps=base_steps,
+            prompt=prompt,
+            num_frames=num_frames,
+            stroke_budget=stroke_budget,
+            width=width,
+            height=height,
+        )
 
         title = base_plan.get("title", prompt)
         clean_title = re.sub(r"\[\d+\s*Frames?\]", "", title, flags=re.IGNORECASE).strip()
@@ -443,3 +614,4 @@ def plan_animation(
         logger.warning("Error composing LLM animation plan: %s. Using procedural animation fallback.", e)
         fallback = plan_animation_fallback(prompt, config, width, height)
         return fallback, "procedural-animator"
+

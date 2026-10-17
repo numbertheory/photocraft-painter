@@ -188,6 +188,24 @@ The user prompt requests geometric shapes (e.g. triangle, square, polygon, hexag
    - In "cubism" style: deconstruct into multi-perspective planar facets, intersecting diagonal ridge lines, and high-contrast volumetric facet lighting leaping off the canvas.
 """
 
+ANIMATION_KEYFRAME_INSTRUCTION = """
+*** CRITICAL ANIMATION RULE: SINGLE INITIAL SUBJECT ONLY (FRAME 1 AT t=0) ***
+This drawing is strictly FRAME 1 (KEYFRAME AT t=0) of a multi-frame animation (steps > 1).
+You MUST draw ONLY A SINGLE INSTANCE of the animated subject in its initial starting position / starting pose!
+1. STRICTLY ONE SUBJECT:
+   - Draw ONLY ONE ball, ONE character, ONE vehicle, or ONE creature in its starting pose at the beginning of the motion.
+   - For example, if the prompt is "a ball bouncing across the screen", draw ONLY ONE BALL (e.g. at the starting position on the left side or top-left) and an optional static ground/floor line.
+   - For example, if the prompt is "a person walking across the screen", draw ONLY ONE PERSON at their starting stride on one side.
+2. ABSOLUTELY FORBIDDEN:
+   - NEVER draw multiple stages of the bounce, multiple positions along a trajectory, multiple exposures, or a motion sequence!
+   - NEVER draw multiple balls, multiple duplicate characters, or a comic-strip progression across the canvas!
+   - NEVER draw motion path arcs, dashed flight trajectory lines, or timing chart lines!
+   - Drawing multiple stages in Frame 1 ruins the animation because subsequent frames duplicate and animate the entire layer. Frame 1 MUST depict only the single subject at the start of its movement.
+3. ENVIRONMENT & SUBJECT LAYERING:
+   - If drawing an environment/floor/ground line, place it on an early layer (e.g. "Background Ground").
+   - Place the single animated subject on its own layer (e.g. "Subject" or "Ball").
+"""
+
 
 def normalize_color(c: Any) -> str | None:
     """Normalize a color value into a valid #rrggbb hex string or None."""
@@ -1194,15 +1212,26 @@ def compose_with_ollama(
 
     is_portrait = is_portrait_or_face_prompt(prompt, images)
     is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
+    is_animation = int(getattr(config, "steps", 1)) > 1
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
     if is_portrait or images:
         style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
     if is_geometric:
         style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+    if is_animation:
+        style_system = f"{style_system}\n\n{ANIMATION_KEYFRAME_INSTRUCTION}"
 
     geom_hint = (
         "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
         if is_geometric
+        else ""
+    )
+    anim_hint = (
+        f"\nCRITICAL ANIMATION INSTRUCTION (FRAME 1 OF {config.steps} FRAMES):\n"
+        f"This illustration will serve as the initial starting pose (Frame 1 at t=0) for a {config.steps}-step animation.\n"
+        f"Draw ONLY ONE SINGLE INSTANCE OF THE SUBJECT in its initial starting position / pose!\n"
+        f"STRICTLY FORBIDDEN: Do NOT draw multiple positions, multiple stages of the bounce/motion, multiple copies of the subject, or motion path arcs!\n"
+        if is_animation
         else ""
     )
 
@@ -1215,6 +1244,7 @@ def compose_with_ollama(
             f"Color Mood: {style_preset.color_mood}\n"
             f"Requested Detail: {detail_info}\n"
             f"{geom_hint}"
+            f"{anim_hint}"
             "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths curves or keeps polygons sharp).\n"
             "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
         )
@@ -1232,6 +1262,7 @@ def compose_with_ollama(
                 f"Color Mood: {style_preset.color_mood}\n"
                 f"Requested Detail: {detail_info}\n"
                 f"{geom_hint}"
+                f"{anim_hint}"
                 "Use 3 to 6 key waypoint coordinate points per stroke (the engine automatically smooths curves or keeps polygons sharp).\n"
                 "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
             ),
@@ -1319,15 +1350,26 @@ def compose_with_openai(
 
     is_portrait = is_portrait_or_face_prompt(prompt, images)
     is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
+    is_animation = int(getattr(config, "steps", 1)) > 1
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
     if is_portrait or images:
         style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
     if is_geometric:
         style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+    if is_animation:
+        style_system = f"{style_system}\n\n{ANIMATION_KEYFRAME_INSTRUCTION}"
 
     geom_hint = (
         "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
         if is_geometric
+        else ""
+    )
+    anim_hint = (
+        f"\nCRITICAL ANIMATION INSTRUCTION (FRAME 1 OF {config.steps} FRAMES):\n"
+        f"This illustration will serve as the initial starting pose (Frame 1 at t=0) for a {config.steps}-step animation.\n"
+        f"Draw ONLY ONE SINGLE INSTANCE OF THE SUBJECT in its initial starting position / pose!\n"
+        f"STRICTLY FORBIDDEN: Do NOT draw multiple positions, multiple stages of the bounce/motion, multiple copies of the subject, or motion path arcs!\n"
+        if is_animation
         else ""
     )
 
@@ -1340,6 +1382,7 @@ def compose_with_openai(
             f"Color Mood: {style_preset.color_mood}\n"
             f"Requested Detail: {detail_info}\n"
             f"{geom_hint}"
+            f"{anim_hint}"
             "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
         )
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_instruction}]
@@ -1362,6 +1405,7 @@ def compose_with_openai(
                 f"Color Mood: {style_preset.color_mood}\n"
                 f"Requested Detail: {detail_info}\n"
                 f"{geom_hint}"
+                f"{anim_hint}"
                 "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
             ),
         }
@@ -1432,15 +1476,26 @@ def compose_with_gemini(
 
     is_portrait = is_portrait_or_face_prompt(prompt, images)
     is_geometric, _, _, _ = parse_geometric_shape_prompt(prompt)
+    is_animation = int(getattr(config, "steps", 1)) > 1
     style_system = f"{SYSTEM_PROMPT}\n\n{style_preset.ai_guidance}"
     if is_portrait or images:
         style_system = f"{style_system}\n\n{PORTRAIT_PROMPT_INSTRUCTION}"
     if is_geometric:
         style_system = f"{style_system}\n\n{GEOMETRIC_PROMPT_INSTRUCTION}"
+    if is_animation:
+        style_system = f"{style_system}\n\n{ANIMATION_KEYFRAME_INSTRUCTION}"
 
     geom_hint = (
         "CRITICAL: The prompt requests a geometric shape. A triangle MUST be an exact 3-sided polygon with straight edges and sharp corners (NEVER round it into a gum drop or oval!).\n"
         if is_geometric
+        else ""
+    )
+    anim_hint = (
+        f"\nCRITICAL ANIMATION INSTRUCTION (FRAME 1 OF {config.steps} FRAMES):\n"
+        f"This illustration will serve as the initial starting pose (Frame 1 at t=0) for a {config.steps}-step animation.\n"
+        f"Draw ONLY ONE SINGLE INSTANCE OF THE SUBJECT in its initial starting position / pose!\n"
+        f"STRICTLY FORBIDDEN: Do NOT draw multiple positions, multiple stages of the bounce/motion, multiple copies of the subject, or motion path arcs!\n"
+        if is_animation
         else ""
     )
 
@@ -1453,6 +1508,7 @@ def compose_with_gemini(
             f"Color Mood: {style_preset.color_mood}\n"
             f"Requested Detail: {detail_info}\n"
             f"{geom_hint}"
+            f"{anim_hint}"
             "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
         )
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": text_instruction}]
@@ -1475,6 +1531,7 @@ def compose_with_gemini(
                 f"Color Mood: {style_preset.color_mood}\n"
                 f"Requested Detail: {detail_info}\n"
                 f"{geom_hint}"
+                f"{anim_hint}"
                 "Use layers, sketch lines, brush strokes, shading, and inking contours. Output pure JSON."
             ),
         }
