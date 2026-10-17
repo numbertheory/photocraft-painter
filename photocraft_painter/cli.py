@@ -46,11 +46,14 @@ def print_banner(config: PainterConfig) -> None:
     style_preset = get_style(config.style)
     loop_val = getattr(config, "loop", 1)
     loop_desc = "single pass (no resubmission)" if loop_val == 1 else f"{loop_val - 1} critique & refinement {'pass' if loop_val - 1 == 1 else 'passes'}"
+    steps_val = getattr(config, "steps", 1)
+    steps_desc = "single static frame" if steps_val == 1 else f"{steps_val} frames (cel animation mode)"
 
     text = (
         f"[bold cyan]PhotoCraft Painter[/] [dim]v{__version__}[/]\n"
         f"[dim]Artistic Style:[/] [bold cyan]{style_preset.name.upper()}[/] [dim]({style_preset.description})[/]\n"
         f"[dim]Detail Level:[/]   [bold yellow]{config.detail_level}/25[/] [dim](~{config.detail_level * 10} brushstrokes across all layers)[/]\n"
+        f"[dim]Animation Steps:[/] [bold yellow]{steps_val}/24[/] [dim]({steps_desc})[/]\n"
         f"[dim]Refinement Loop:[/] [bold yellow]{loop_val}/5[/] [dim]({loop_desc})[/]\n"
         f"[dim]AI Composer:[/]    [yellow]{engine_name}[/] [dim]at[/] [cyan]{engine_target}[/]\n"
         f"[dim]Bridge Target:[/]  [green]127.0.0.1:{config.control_port}[/]\n"
@@ -83,18 +86,27 @@ async def draw_prompt(
         img_names = ", ".join(f"'{p.name}'" for p in images)
         task_desc += f" [dim](reference: {img_names})[/]"
 
+    task_type = f"animation plan ({config.steps} frames)" if config.steps > 1 else "illustration plan"
     with Progress(
         SpinnerColumn(),
-        TextColumn("[bold cyan]Composing illustration plan for:[/] {task.description}"),
+        TextColumn(f"[bold cyan]Composing {task_type} for:[/] {{task.description}}"),
         console=console,
         transient=True,
     ) as progress:
         progress.add_task(description=task_desc, total=None)
-        plan, source = plan_artwork(effective_prompt, config, config.default_width, config.default_height, images=images)
+        if config.steps > 1:
+            from photocraft_painter.animator import plan_animation
+            plan, source = plan_animation(effective_prompt, config, config.default_width, config.default_height, images=images)
+        else:
+            plan, source = plan_artwork(effective_prompt, config, config.default_width, config.default_height, images=images)
 
     title = plan.get("title", effective_prompt)
     steps = plan.get("steps", [])
-    console.print(f"[bold green]✓[/] Composed [bold]{title}[/] ({len(steps)} steps via [cyan]{source}[/])")
+    if config.steps > 1:
+        strokes_per_frame = plan.get("strokes_per_frame", 0)
+        console.print(f"[bold green]✓[/] Composed [bold]{title}[/] ({config.steps} frames @ {strokes_per_frame} strokes/frame via [cyan]{source}[/])")
+    else:
+        console.print(f"[bold green]✓[/] Composed [bold]{title}[/] ({len(steps)} steps via [cyan]{source}[/])")
     if images:
         console.print(f"  [dim]Visual reference from:[/] {', '.join(f'[cyan]{p}[/]' for p in images)}")
     console.print(f"[dim]Watching canvas update live in PhotoCraft...[/]")
@@ -109,7 +121,7 @@ async def draw_prompt(
             desc = f"paint bucket {col} @ ({x}, {y})"
         elif cmd == "paint.stroke":
             kind = params.get("kind", "")
-            fill = params.get("fill") or "brush stroke"
+            fill = params.get("fill") or ("eraser" if params.get("erase") else "brush stroke")
             desc = f"{kind} {fill}".strip()
         else:
             kind = params.get("kind", "")
@@ -133,13 +145,20 @@ async def draw_prompt(
         on_step_error=on_error,
         create_canvas=True,
     )
-    console.print(
-        f"[bold green]✓ Initial pass complete![/] "
-        f"[dim]({summary['steps_drawn']}/{summary['total_steps']} steps rendered)[/]\n"
-    )
+    if config.steps > 1:
+        console.print(
+            f"[bold green]✓ Animation rendering complete![/] "
+            f"[dim]({summary.get('frames_drawn', config.steps)} frames generated, all layers visible on screen)[/]\n"
+            f"[dim]Tip: Use [cyan]/play[/] to preview animation in PhotoCraft, or [cyan]/steps 1[/] to return to static drawing.[/]\n"
+        )
+    else:
+        console.print(
+            f"[bold green]✓ Initial pass complete![/] "
+            f"[dim]({summary['steps_drawn']}/{summary['total_steps']} steps rendered)[/]\n"
+        )
 
     loop_total = getattr(config, "loop", 1)
-    refinement_passes = max(0, loop_total - 1)
+    refinement_passes = max(0, loop_total - 1) if config.steps == 1 else 0
 
     phase_names = {
         1: "Phase 1: Complete Occlusion Repair & Solid Base Flats",
@@ -235,7 +254,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/loop <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/steps <1-24>[/], [cyan]/play [doc|fps][/], [cyan]/docs[/], [cyan]/loop <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
         "[dim]Tip: Use file:<path> to reference images (e.g. file:/path/to/apple.png make a green apple)[/]\n"
     )
 
@@ -398,6 +417,99 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                               f"[dim]Use /loop <1-5> to set (1 = standard single pass; 2-5 = submits rendered PNG back to AI for iterative refinement)[/]\n")
             continue
 
+        if user_input.startswith("/steps"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) > 1:
+                try:
+                    lvl = int(parts[1])
+                    if 1 <= lvl <= 24:
+                        config.steps = lvl
+                        desc = "single static frame" if config.steps == 1 else f"{config.steps} frames (cel animation mode)"
+                        console.print(f"[bold green]✓[/] Animation steps set to [bold cyan]{config.steps}[/] [dim]({desc})[/]\n")
+                    else:
+                        console.print("[red]Steps setting must be an integer between 1 and 24[/]\n")
+                except ValueError:
+                    console.print("[red]Invalid steps setting (expected integer 1-24)[/]\n")
+            else:
+                desc = "single static frame" if config.steps == 1 else f"{config.steps} frames (cel animation mode)"
+                console.print(f"[cyan]Current animation steps setting:[/] [bold]{config.steps}[/]/24 [dim]({desc})[/]\n"
+                              f"[dim]Use /steps <1-24> to set (1 = standard static drawing; 2-24 = generates multi-layer animation with one layer per frame)[/]\n")
+            continue
+
+        if user_input.startswith("/play"):
+            parts = user_input.split()
+            target_doc: str | int | None = None
+            fps: float = 12.0
+
+            if len(parts) == 2:
+                val = parts[1]
+                try:
+                    num = float(val)
+                    if num > 0 and num <= 60:
+                        fps = num
+                    else:
+                        target_doc = val
+                except ValueError:
+                    target_doc = val
+            elif len(parts) >= 3:
+                target_doc = parts[1]
+                try:
+                    fps = float(parts[2])
+                except ValueError:
+                    pass
+
+            from photocraft_painter.artist import play_live_animation
+            target_desc = f"'{target_doc}'" if target_doc is not None else "active document tab"
+            console.print(f"[bold cyan]▶ Playing animation in PhotoCraft ({target_desc} @ {fps:.1f} fps)...[/]")
+            console.print("[dim]Press Enter to stop playback (or Ctrl+C)...[/]\n")
+
+            stop_evt = asyncio.Event()
+
+            def wait_for_input():
+                try:
+                    sys.stdin.readline()
+                except Exception:
+                    pass
+                stop_evt.set()
+
+            loop = asyncio.get_running_loop()
+            input_fut = loop.run_in_executor(None, wait_for_input)
+
+            def on_frame_tick(cur: int, tot: int, name: str) -> None:
+                sys.stdout.write(f"\r  [bold green]Frame {cur:02d}/{tot:02d}[/] : {name}    ")
+                sys.stdout.flush()
+
+            try:
+                play_res = await play_live_animation(
+                    client,
+                    target_doc=target_doc,
+                    fps=fps,
+                    stop_event=stop_evt,
+                    on_frame_change=on_frame_tick,
+                )
+                if play_res.get("status") == "error":
+                    console.print(f"\n[bold red]✗ Playback notice:[/] {play_res.get('message')}\n")
+                else:
+                    console.print(f"\n[bold green]■ Playback complete.[/] [dim]({play_res.get('loops_completed', 0)} loops completed. All frames kept visible.)[/]\n")
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                stop_evt.set()
+                console.print("\n[dim]Playback stopped. All frame layers restored to visible.[/]\n")
+            finally:
+                stop_evt.set()
+            continue
+
+        if user_input in ("/docs", "/documents"):
+            from photocraft_painter.artist import list_open_documents
+            docs = await list_open_documents(client)
+            if not docs:
+                console.print("[yellow]No open documents found in PhotoCraft.[/]\n")
+            else:
+                console.print("[bold]Open Document Tabs in PhotoCraft:[/]")
+                for d in docs:
+                    console.print(f"  [cyan][{d['index']}][/] [bold]{d['title']}[/] [dim]({d.get('width', '?')}x{d.get('height', '?')}, {d.get('layers_count', '?')} layers)[/]")
+                console.print("[dim]Tip: Use /play <index|name> to designate any open document to play (e.g. /play 0 12)[/]\n")
+            continue
+
         if user_input.startswith("/export"):
             parts = user_input.split(maxsplit=1)
             target = parts[1].strip() if len(parts) > 1 else "output.png"
@@ -421,13 +533,16 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
         if user_input == "/help":
             console.print(
                 "[bold cyan]Available Commands & Syntax:[/]\n"
-                "  <prompt>          Compose and draw illustration live in PhotoCraft\n"
+                "  <prompt>          Compose and draw illustration or animation live in PhotoCraft\n"
                 "  file:<path> <msg> Use reference image(s) to inspire composition (e.g. file:/path/to/apple.png make a green apple)\n"
                 "  /style            List all available artistic styles and show active style\n"
-                "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism)\n"
+                "  /style <name>     Switch artistic style (realistic, dreamlike, abstract, sketchy, cartoon, painterly, cubism, pencil)\n"
                 "  /model            List local & recommended models (https://ollama.com/search) with interactive selection\n"
                 "  /model <name|#>   Switch active AI model on the fly by name or list number\n"
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
+                "  /steps <1-24>     Set animation frames count (1=static; 2-24=multi-layer animation with equal strokes/frame)\n"
+                "  /play [doc|fps]   Play animation live in PhotoCraft (plays active tab or designated document/file)\n"
+                "  /docs             List all currently open document tabs in PhotoCraft\n"
                 "  /loop <1-5>       Refinement loop count (1=single pass; 2-5=re-submits PNG snapshot to AI with critique instructions)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
                 "  /speed <sec>      Set live step delay (e.g. 0.05 for fast, 0.2 for slower)\n"
@@ -463,6 +578,7 @@ async def async_main(args: argparse.Namespace) -> None:
         style=args.style,
         detail_level=args.detail,
         loop=args.loop,
+        steps=getattr(args, "steps", 1),
         provider=provider,
         ollama_host=args.ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434",
         ollama_model=ollama_model,
@@ -549,6 +665,15 @@ def main() -> None:
         choices=range(1, 6),
         metavar="1-5",
         help="Refinement loop count 1 to 5 (default: 1; values 2-5 re-submit rendered canvas PNG back to AI for iterative refinement)",
+    )
+    parser.add_argument(
+        "--steps",
+        "-st",
+        type=int,
+        default=int(os.getenv("PAINTER_STEPS") or "1"),
+        choices=range(1, 25),
+        metavar="1-24",
+        help="Animation frames count 1 to 24 (default: 1; values > 1 generate multi-layer cel animation)",
     )
     parser.add_argument("--launch", action="store_true", help="Automatically launch PhotoCraft if not already running")
     parser.add_argument("--provider", type=str, choices=["ollama", "openai", "gemini", "google"], default=None, help="AI provider (default: auto/ollama)")

@@ -212,10 +212,16 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
     cmd = str(step.get("cmd") or step.get("id") or "shape.create").strip()
     raw_params = dict(step.get("params") or {})
 
-    # 1. Layer creation command
+    # 1. Layer creation and duplication commands
     if cmd in ("layer.new.layer", "layer.new", "new.layer"):
         name = str(raw_params.get("name") or "Layer")
         return {"cmd": "layer.new.layer", "params": {"name": name}}
+    if cmd in ("layer.duplicate", "layer.new.layerViaCopy", "layer.copy"):
+        return {"cmd": "layer.duplicate", "params": raw_params}
+    if cmd in ("layer.renameLayer", "layer.rename"):
+        return {"cmd": "layer.renameLayer", "params": raw_params}
+    if cmd in ("layer.setProps", "layer.props"):
+        return {"cmd": "layer.setProps", "params": raw_params}
 
     # 2. Brush stroke command
     if cmd in ("paint.stroke", "brush.stroke", "stroke"):
@@ -269,6 +275,8 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
             clean_params["hardness"] = max(0.0, min(float(raw_params["hardness"]), 1.0))
         if "opacity" in raw_params:
             clean_params["opacity"] = max(0.0, min(float(raw_params["opacity"]), 1.0))
+        if "erase" in raw_params:
+            clean_params["erase"] = bool(raw_params["erase"])
 
         return {"cmd": "paint.stroke", "params": clean_params}
 

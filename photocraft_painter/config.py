@@ -51,11 +51,21 @@ class PainterConfig:
         default_factory=lambda: max(1, min(5, int(os.getenv("PAINTER_LOOP") or "1")))
     )
 
+    # Animation steps / frames: 1 (default: static single frame) to 24 (multi-layer cel animation)
+    steps: int = field(
+        default_factory=lambda: max(1, min(24, int(os.getenv("PAINTER_STEPS") or "1")))
+    )
+
     def __post_init__(self) -> None:
         try:
             object.__setattr__(self, "loop", max(1, min(5, int(self.loop))))
         except (ValueError, TypeError):
             object.__setattr__(self, "loop", 1)
+
+        try:
+            object.__setattr__(self, "steps", max(1, min(24, int(self.steps))))
+        except (ValueError, TypeError):
+            object.__setattr__(self, "steps", 1)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in ("loop", "loop_count"):
@@ -64,6 +74,13 @@ class PainterConfig:
             except (ValueError, TypeError):
                 clamped = 1
             object.__setattr__(self, "loop", clamped)
+            return
+        if name in ("steps", "steps_count", "animation_steps", "frames"):
+            try:
+                clamped = max(1, min(24, int(value)))
+            except (ValueError, TypeError):
+                clamped = 1
+            object.__setattr__(self, "steps", clamped)
             return
         object.__setattr__(self, name, value)
 
@@ -74,6 +91,14 @@ class PainterConfig:
     @loop_count.setter
     def loop_count(self, value: int) -> None:
         self.loop = value
+
+    @property
+    def animation_steps(self) -> int:
+        return self.steps
+
+    @animation_steps.setter
+    def animation_steps(self, value: int) -> None:
+        self.steps = value
 
     # AI Model Settings - Ollama is the default composer
     provider: str = field(
