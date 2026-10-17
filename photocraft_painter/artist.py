@@ -185,7 +185,7 @@ async def execute_live_drawing(
     finally:
         # 3. Always restore all layers to visible once the drawing process finishes
         await restore_all_layers()
-        if str(style).lower() == "pencil":
+        if str(style).lower() == "pencil" and config.steps == 1:
             await merge_drawing_layers_to_single_layer(client, target_name="Pencil Drawing")
 
     return {
@@ -375,10 +375,22 @@ async def execute_live_animation(
                 doc_layers = await get_doc_layer_ids()
                 if doc_layers:
                     prev_frame_id = doc_layers[0]
+                    try:
+                        await client.command_run("layer.select", {"layer": prev_frame_id})
+                    except Exception:
+                        pass
 
             else:
                 # Frames 2..N: Duplicate previous frame layer, hide previous, and apply delta strokes
-                dup_res = await client.command_run("layer.duplicate", {})
+                dup_params: dict[str, Any] = {"inPlace": True}
+                if prev_frame_id is not None:
+                    dup_params["layer"] = prev_frame_id
+                    try:
+                        await client.command_run("layer.select", {"layer": prev_frame_id})
+                    except Exception:
+                        pass
+
+                dup_res = await client.command_run("layer.duplicate", dup_params)
                 new_frame_id: int | None = None
                 if isinstance(dup_res, dict) and "layer" in dup_res:
                     new_frame_id = int(dup_res["layer"])
@@ -389,19 +401,15 @@ async def execute_live_animation(
 
                 if new_frame_id is not None:
                     try:
+                        await client.command_run("layer.select", {"layer": new_frame_id})
                         await client.command_run("layer.renameLayer", {"layer": new_frame_id, "name": frame_name})
+                        await client.command_run("layer.setProps", {"layer": new_frame_id, "visible": True})
                     except Exception as e:
                         logger.debug("Could not rename layer %s: %s", new_frame_id, e)
 
-                if prev_frame_id is not None:
+                if prev_frame_id is not None and prev_frame_id != new_frame_id:
                     try:
                         await client.command_run("layer.setProps", {"layer": prev_frame_id, "visible": False})
-                    except Exception:
-                        pass
-
-                if new_frame_id is not None:
-                    try:
-                        await client.command_run("layer.setProps", {"layer": new_frame_id, "visible": True})
                     except Exception:
                         pass
 
@@ -564,6 +572,22 @@ async def play_live_animation(
             except Exception:
                 pass
 
+        # Initialize visibility: show first frame, hide others
+        first_frame_id = frame_layers[0].get("id")
+        for flayer in frame_layers[1:]:
+            fid = flayer.get("id")
+            if fid is not None:
+                try:
+                    await client.command_run("layer.setProps", {"layer": fid, "visible": False})
+                except Exception:
+                    pass
+        if first_frame_id is not None:
+            try:
+                await client.command_run("layer.setProps", {"layer": first_frame_id, "visible": True})
+            except Exception:
+                pass
+
+        prev_id = first_frame_id
         while True:
             if stop_event and stop_event.is_set():
                 break
@@ -572,20 +596,17 @@ async def play_live_animation(
                 cur_id = flayer.get("id")
                 cur_name = flayer.get("name") or f"Frame {idx}"
 
-                # Hide other frame layers
-                for other in frame_layers:
-                    oid = other.get("id")
-                    if oid != cur_id:
-                        try:
-                            await client.command_run("layer.setProps", {"layer": oid, "visible": False})
-                        except Exception:
-                            pass
-
-                # Show current frame
-                try:
-                    await client.command_run("layer.setProps", {"layer": cur_id, "visible": True})
-                except Exception:
-                    pass
+                if prev_id is not None and prev_id != cur_id:
+                    try:
+                        await client.command_run("layer.setProps", {"layer": prev_id, "visible": False})
+                    except Exception:
+                        pass
+                if cur_id is not None:
+                    try:
+                        await client.command_run("layer.setProps", {"layer": cur_id, "visible": True})
+                    except Exception:
+                        pass
+                prev_id = cur_id
 
                 if on_frame_change:
                     on_frame_change(idx, total_frames, cur_name)
@@ -607,12 +628,12 @@ async def play_live_animation(
             if fid is not None:
                 try:
                     await client.command_run("layer.setProps", {"layer": fid, "visible": True})
-                except Exception:
+                except (Exception, KeyboardInterrupt):
                     pass
         if bg_id is not None:
             try:
                 await client.command_run("layer.setProps", {"layer": bg_id, "visible": True})
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 pass
 
     return {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import os
 import sys
 from typing import Any
@@ -238,7 +239,7 @@ async def draw_prompt(
                 except Exception:
                     pass
 
-    if config.style.lower() == "pencil":
+    if config.style.lower() == "pencil" and config.steps == 1:
         try:
             from photocraft_painter.artist import merge_drawing_layers_to_single_layer
             await merge_drawing_layers_to_single_layer(client, target_name="Pencil Drawing")
@@ -464,19 +465,25 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
             console.print("[dim]Press Enter to stop playback (or Ctrl+C)...[/]\n")
 
             stop_evt = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            reader_added = False
 
-            def wait_for_input():
+            def on_stdin_readable() -> None:
                 try:
                     sys.stdin.readline()
                 except Exception:
                     pass
                 stop_evt.set()
 
-            loop = asyncio.get_running_loop()
-            input_fut = loop.run_in_executor(None, wait_for_input)
+            try:
+                if hasattr(sys.stdin, "fileno"):
+                    loop.add_reader(sys.stdin.fileno(), on_stdin_readable)
+                    reader_added = True
+            except (NotImplementedError, io.UnsupportedOperation, AttributeError, OSError, ValueError):
+                pass
 
             def on_frame_tick(cur: int, tot: int, name: str) -> None:
-                sys.stdout.write(f"\r  [bold green]Frame {cur:02d}/{tot:02d}[/] : {name}    ")
+                sys.stdout.write(f"\r  Frame {cur:02d}/{tot:02d} : {name}    ")
                 sys.stdout.flush()
 
             try:
@@ -496,6 +503,17 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 console.print("\n[dim]Playback stopped. All frame layers restored to visible.[/]\n")
             finally:
                 stop_evt.set()
+                if reader_added:
+                    try:
+                        loop.remove_reader(sys.stdin.fileno())
+                    except Exception:
+                        pass
+                try:
+                    import termios
+                    if hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+                        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                except Exception:
+                    pass
             continue
 
         if user_input in ("/docs", "/documents"):
@@ -553,6 +571,8 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
 
         try:
             await draw_prompt(client, user_input, config)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            console.print("\n[dim]Drawing interrupted by user.[/]\n")
         except Exception as e:
             console.print(f"[bold red]✗ Error during drawing:[/] {e}\n")
 

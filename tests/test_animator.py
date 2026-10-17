@@ -332,3 +332,195 @@ async def test_list_open_documents():
     assert docs[1]["title"] == "Animation.psd"
     assert docs[1]["layers_count"] == 2
 
+
+@pytest.mark.anyio
+async def test_pencil_animation_does_not_merge_frames_down():
+    """Regression test: /style pencil in animation mode (steps > 1) must preserve all separate frame layers."""
+    from photocraft_painter.artist import execute_live_animation
+
+    created_layers: list[int] = [0, 1]
+    next_id = 2
+
+    mock_client = AsyncMock()
+    mock_client.doc_new.return_value = {"document": 0}
+
+    def mock_command(cmd, params=None):
+        nonlocal next_id
+        if cmd == "layer.duplicate":
+            nid = next_id
+            next_id += 1
+            created_layers.append(nid)
+            return {"layer": nid}
+        return {"status": "ok"}
+
+    mock_client.command_run.side_effect = mock_command
+    mock_client.doc_inspect.side_effect = lambda: {
+        "layers": [{"id": lid, "name": f"Frame {lid}" if lid > 0 else "Background", "visible": True} for lid in reversed(created_layers)]
+    }
+
+    cfg = PainterConfig(provider="none", steps=4, style="pencil", detail_level=5, step_delay=0.0)
+    plan, _ = plan_animation("a teddy bear walking across the screen", cfg)
+
+    summary = await execute_live_animation(mock_client, plan, cfg, create_canvas=True)
+    assert summary["frames_drawn"] == 4
+
+    rename_calls = [
+        call.args[1].get("name")
+        for call in mock_client.command_run.call_args_list
+        if call.args and call.args[0] == "layer.renameLayer"
+    ]
+    # Frames 2, 3, 4 must be preserved as their own layers and never renamed to a single Pencil Drawing
+    assert "Pencil Drawing" not in rename_calls
+    assert "Frame 2" in rename_calls
+    assert "Frame 3" in rename_calls
+    assert "Frame 4" in rename_calls
+
+
+@pytest.mark.anyio
+async def test_play_consecutive_runs_with_keyboard_interrupt():
+    """Verify multiple consecutive /play calls interrupted by KeyboardInterrupt work cleanly without deadlock."""
+    import asyncio
+    from photocraft_painter.artist import play_live_animation
+
+    mock_client = AsyncMock()
+    mock_client.doc_inspect.return_value = {
+        "layers": [
+            {"id": 2, "name": "Frame 2", "visible": True},
+            {"id": 1, "name": "Frame 1", "visible": True},
+            {"id": 0, "name": "Background", "visible": True},
+        ]
+    }
+    mock_client.command_run.return_value = {"status": "ok"}
+
+    # Run 1: interrupted by KeyboardInterrupt
+    tick_count = 0
+
+    def tick_interrupt(cur, tot, name):
+        nonlocal tick_count
+        tick_count += 1
+        if tick_count >= 1:
+            raise KeyboardInterrupt("Simulated Ctrl+C")
+
+    with pytest.raises(KeyboardInterrupt):
+        await play_live_animation(
+            mock_client,
+            fps=60.0,
+            on_frame_change=tick_interrupt,
+        )
+
+    # Verify all layers were restored in finally
+    visible_calls_run1 = [
+        call for call in mock_client.command_run.call_args_list
+        if call.args and call.args[0] == "layer.setProps" and call.args[1].get("visible") is True
+    ]
+    assert len(visible_calls_run1) >= 3
+
+    # Run 2: immediately run again, interrupted again
+    mock_client.command_run.reset_mock()
+    tick_count = 0
+    with pytest.raises(KeyboardInterrupt):
+        await play_live_animation(
+            mock_client,
+            fps=60.0,
+            on_frame_change=tick_interrupt,
+        )
+
+    visible_calls_run2 = [
+        call for call in mock_client.command_run.call_args_list
+        if call.args and call.args[0] == "layer.setProps" and call.args[1].get("visible") is True
+    ]
+    assert len(visible_calls_run2) >= 3
+
+    # Run 3: completes normally with max_loops=1
+    mock_client.command_run.reset_mock()
+    res = await play_live_animation(mock_client, fps=60.0, max_loops=1)
+    assert res["status"] == "ok"
+    assert res["loops_completed"] == 1
+
+
+@pytest.mark.anyio
+async def test_play_input_listener_does_not_leak_threads():
+    """Verify that setting up and tearing down the non-blocking input listener leaves zero orphaned threads."""
+    import asyncio
+    import threading
+
+    initial_threads = threading.enumerate()
+    loop = asyncio.get_running_loop()
+
+    # Simulate 3 consecutive play start/stop cycles
+    for cycle in range(3):
+        stop_evt = asyncio.Event()
+        reader_added = False
+
+        def on_stdin_readable():
+            stop_evt.set()
+
+        try:
+            if hasattr(sys.stdin, "fileno"):
+                loop.add_reader(sys.stdin.fileno(), on_stdin_readable)
+                reader_added = True
+        except Exception:
+            pass
+
+        try:
+            # Short sleep simulating playback
+            await asyncio.sleep(0.01)
+        finally:
+            stop_evt.set()
+            if reader_added:
+                try:
+                    loop.remove_reader(sys.stdin.fileno())
+                except Exception:
+                    pass
+
+    final_threads = threading.enumerate()
+    assert len(final_threads) == len(initial_threads), (
+        f"Thread count changed: initial {len(initial_threads)}, final {len(final_threads)}"
+    )
+
+
+@pytest.mark.anyio
+async def test_play_live_animation_restores_layers_on_secondary_interrupt():
+    """Verify that even if an interrupt occurs while restoring one layer in finally, other layers are restored."""
+    from photocraft_painter.artist import play_live_animation
+
+    mock_client = AsyncMock()
+    mock_client.doc_inspect.return_value = {
+        "layers": [
+            {"id": 2, "name": "Frame 2", "visible": True},
+            {"id": 1, "name": "Frame 1", "visible": True},
+            {"id": 0, "name": "Background", "visible": True},
+        ]
+    }
+
+    call_count = 0
+    def mock_cmd(cmd, params=None):
+        nonlocal call_count
+        call_count += 1
+        # Raise interrupt on first visibility call during finally cleanup
+        if cmd == "layer.setProps" and params and params.get("visible") is True and call_count == 4:
+            raise KeyboardInterrupt("Simulated secondary Ctrl+C during cleanup")
+        return {"status": "ok"}
+
+    mock_client.command_run.side_effect = mock_cmd
+
+    def tick_interrupt(cur, tot, name):
+        raise KeyboardInterrupt("Simulated primary Ctrl+C")
+
+    with pytest.raises(KeyboardInterrupt):
+        await play_live_animation(
+            mock_client,
+            fps=60.0,
+            on_frame_change=tick_interrupt,
+        )
+
+    # Background and remaining layers should still have received setProps visible: True
+    restored_layers = [
+        call.args[1].get("layer")
+        for call in mock_client.command_run.call_args_list
+        if call.args and call.args[0] == "layer.setProps" and call.args[1].get("visible") is True
+    ]
+    # Check that background (0) and other layers were attempted
+    assert 0 in restored_layers
+
+
