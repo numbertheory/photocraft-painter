@@ -255,7 +255,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
     """Run interactive REPL loop."""
     print_banner(config)
     console.print(
-        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/steps <1-24>[/], [cyan]/play [doc|fps][/], [cyan]/docs[/], [cyan]/loop <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
+        "[bold]Type any prompt to draw live on screen.[/] Commands: [cyan]/style <name>[/], [cyan]/model <name|#>[/], [cyan]/detail <1-25>[/], [cyan]/steps <1-24>[/], [cyan]/play [doc|fps][/], [cyan]/movie [fps][/], [cyan]/docs[/], [cyan]/loop <1-5>[/], [cyan]/export <file>[/], [cyan]/speed <sec>[/], [cyan]/quit[/]\n"
         "[dim]Tip: Use file:<path> to reference images (e.g. file:/path/to/apple.png make a green apple)[/]\n"
     )
 
@@ -516,6 +516,79 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                     pass
             continue
 
+        if user_input.startswith("/movie"):
+            parts = user_input.split()
+            target_doc: str | int | None = None
+            fps: float = 5.0
+
+            if len(parts) == 2:
+                val = parts[1]
+                try:
+                    num = float(val)
+                    if 0.1 <= num <= 120.0:
+                        fps = num
+                    else:
+                        target_doc = val
+                except ValueError:
+                    target_doc = val
+            elif len(parts) >= 3:
+                target_doc = parts[1]
+                try:
+                    num = float(parts[2])
+                    if 0.1 <= num <= 120.0:
+                        fps = num
+                except ValueError:
+                    pass
+
+            from photocraft_painter.movie import check_movie_dependencies, export_document_movie
+
+            available, missing = check_movie_dependencies()
+            if not available:
+                console.print(
+                    f"\n[bold red]✗ Missing dependency:[/] {' and '.join(missing)} must be installed to export movies.\n"
+                    f"  [dim]Please install {' and '.join(missing)} using your package manager (e.g. 'sudo apt install ffmpeg imagemagick').[/]\n"
+                )
+                continue
+
+            target_desc = f"'{target_doc}'" if target_doc is not None else "active document tab"
+            console.print(f"[bold cyan]🎬 Exporting animation movie from {target_desc} @ {fps:.1f} fps...[/]")
+
+            def on_frame_step(cur: int, tot: int, name: str) -> None:
+                sys.stdout.write(f"\r  Capturing frame {cur:02d}/{tot:02d} : {name}    ")
+                sys.stdout.flush()
+
+            def on_status_msg(msg: str) -> None:
+                console.print(f"\n[dim]{msg}[/]")
+
+            try:
+                result = await export_document_movie(
+                    client=client,
+                    target_doc=target_doc,
+                    fps=fps,
+                    on_frame_progress=on_frame_step,
+                    on_status=on_status_msg,
+                )
+                sys.stdout.write("\r" + " " * 60 + "\r")
+                sys.stdout.flush()
+
+                if result.get("status") == "error":
+                    console.print(f"[bold red]✗ Movie export failed:[/] {result.get('message')}\n")
+                else:
+                    out_path = result.get("path")
+                    frames_tot = result.get("frames_count", 0)
+                    dur = result.get("duration", 0.0)
+                    size = result.get("size_bytes", 0)
+                    size_kb = size / 1024.0
+                    size_str = f"{size_kb / 1024.0:.2f} MB" if size_kb > 1024.0 else f"{size_kb:.1f} KB"
+                    console.print(
+                        f"[bold green]✓ Movie exported successfully![/]\n"
+                        f"  [cyan]File:[/] [bold]{out_path}[/]\n"
+                        f"  [dim]Stats: {frames_tot} frames @ {fps:.1f} fps ({dur:.1f}s, {size_str})[/]\n"
+                    )
+            except Exception as e:
+                console.print(f"\n[bold red]✗ Error exporting movie:[/] {e}\n")
+            continue
+
         if user_input in ("/docs", "/documents"):
             from photocraft_painter.artist import list_open_documents
             docs = await list_open_documents(client)
@@ -560,6 +633,7 @@ async def run_repl(client: PhotocraftMcpClient, config: PainterConfig) -> None:
                 "  /detail <1-25>    Adjust drawing detail level 1 to 25 (~10 to ~250 brushstrokes)\n"
                 "  /steps <1-24>     Set animation frames count (1=static; 2-24=multi-layer animation with equal strokes/frame)\n"
                 "  /play [doc|fps]   Play animation live in PhotoCraft (plays active tab or designated document/file)\n"
+                "  /movie [fps]      Export all layers of open document as an MP4 movie (via magick + ffmpeg; e.g. /movie 5)\n"
                 "  /docs             List all currently open document tabs in PhotoCraft\n"
                 "  /loop <1-5>       Refinement loop count (1=single pass; 2-5=re-submits PNG snapshot to AI with critique instructions)\n"
                 "  /export <path>    Export active document as PNG/PSD/etc.\n"
@@ -643,6 +717,23 @@ async def async_main(args: argparse.Namespace) -> None:
     # Connect to MCP bridge
     try:
         async with connect_mcp_bridge(config) as client:
+            if getattr(args, "movie", None) is not None:
+                from photocraft_painter.movie import check_movie_dependencies, export_document_movie
+                available, missing = check_movie_dependencies()
+                if not available:
+                    console.print(
+                        f"\n[bold red]✗ Missing dependency:[/] {' and '.join(missing)} must be installed to export movies.\n"
+                    )
+                    return
+                fps = float(args.movie) if args.movie > 0 else 5.0
+                console.print(f"[bold cyan]🎬 Exporting animation movie @ {fps:.1f} fps...[/]")
+                res = await export_document_movie(client, fps=fps, output_path=getattr(args, "movie_output", None))
+                if res.get("status") == "error":
+                    console.print(f"[bold red]✗ Movie export failed:[/] {res.get('message')}\n")
+                else:
+                    console.print(f"[bold green]✓ Movie exported successfully![/] [cyan]{res.get('path')}[/]\n")
+                return
+
             if args.prompt:
                 print_banner(config)
                 await draw_prompt(client, args.prompt, config)
@@ -695,6 +786,8 @@ def main() -> None:
         metavar="1-24",
         help="Animation frames count 1 to 24 (default: 1; values > 1 generate multi-layer cel animation)",
     )
+    parser.add_argument("--movie", nargs="?", const=5.0, type=float, default=None, metavar="FPS", help="Export active document as MP4 movie at specified FPS (default: 5.0) and exit")
+    parser.add_argument("--movie-output", type=str, default=None, help="Custom output MP4 path for --movie")
     parser.add_argument("--launch", action="store_true", help="Automatically launch PhotoCraft if not already running")
     parser.add_argument("--provider", type=str, choices=["ollama", "openai", "gemini", "google"], default=None, help="AI provider (default: auto/ollama)")
     parser.add_argument("--model", type=str, default=None, help="Model name tag (e.g. ornith-1.5:35b, gemini-4-argon, gemini-3.8-flash, gpt-4o-mini)")
