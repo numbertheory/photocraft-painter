@@ -5,6 +5,8 @@ import base64
 import json
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -264,10 +266,114 @@ class PhotocraftMcpClient:
         """Export the active document to a file path."""
         return await self.call_tool("doc_export", {"path": path})
 
+    async def export_canvas_png(
+        self,
+        output_path: str | Path,
+        canvas_width: int | None = None,
+        canvas_height: int | None = None,
+    ) -> bool:
+        """Export the currently visible canvas composite to a PNG file without UI window chrome.
+
+        Tries direct `doc_export`, then relative `doc_export` relay (if write_root is cwd),
+        and then `edit.copyMerged` with OS clipboard PNG extraction.
+        """
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. Direct doc_export to target path
+        try:
+            await self.doc_export(str(path.resolve()))
+            if path.exists() and path.stat().st_size > 0:
+                return True
+        except Exception as e:
+            logger.debug("Direct doc_export to %s failed: %s", path, e)
+
+        # 2. Relative doc_export in cwd (when automation write_root was set to cwd)
+        rel_name = f".photocraft_tmp_{os.getpid()}_{id(path)}.png"
+        rel_path = Path.cwd() / rel_name
+        try:
+            await self.doc_export(rel_name)
+            if rel_path.exists() and rel_path.stat().st_size > 0:
+                shutil.move(str(rel_path), str(path))
+                return path.exists() and path.stat().st_size > 0
+        except Exception as e:
+            logger.debug("Relative doc_export to %s failed: %s", rel_name, e)
+        finally:
+            if rel_path.exists():
+                try:
+                    rel_path.unlink()
+                except Exception:
+                    pass
+
+        # 3. Pure canvas export via edit.copyMerged + OS clipboard PNG read
+        try:
+            copy_res = await self.command_run("edit.copyMerged", {})
+            bounds = copy_res.get("bounds") if isinstance(copy_res, dict) else None
+            if isinstance(bounds, list) and len(bounds) == 4:
+                png_bytes = b""
+                if shutil.which("wl-paste"):
+                    proc = subprocess.run(
+                        ["wl-paste", "--type", "image/png"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    if proc.returncode == 0 and proc.stdout.startswith(b"\x89PNG"):
+                        png_bytes = proc.stdout
+                if not png_bytes and shutil.which("xclip"):
+                    proc = subprocess.run(
+                        ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    if proc.returncode == 0 and proc.stdout.startswith(b"\x89PNG"):
+                        png_bytes = proc.stdout
+                if png_bytes:
+                    path.write_bytes(png_bytes)
+                elif shutil.which("magick"):
+                    subprocess.run(
+                        ["magick", "clipboard:", f"png:{path.resolve()}"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+
+                if path.exists() and path.stat().st_size > 0:
+                    bx, by, bw, bh = [int(v) for v in bounds]
+                    if (
+                        canvas_width
+                        and canvas_height
+                        and (bx != 0 or by != 0 or bw != canvas_width or bh != canvas_height)
+                        and shutil.which("magick")
+                    ):
+                        padded = path.with_suffix(".padded.png")
+                        geom = f"{ '+' if bx >= 0 else '' }{bx}{ '+' if by >= 0 else '' }{by}"
+                        res_pad = subprocess.run(
+                            [
+                                "magick",
+                                "-size",
+                                f"{canvas_width}x{canvas_height}",
+                                "xc:white",
+                                str(path.resolve()),
+                                "-geometry",
+                                geom,
+                                "-composite",
+                                str(padded.resolve()),
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        if res_pad.returncode == 0 and padded.exists() and padded.stat().st_size > 0:
+                            shutil.move(str(padded), str(path))
+                    return True
+        except Exception as e:
+            logger.debug("edit.copyMerged canvas export failed: %s", e)
+
+        return False
+
     async def capture_png(self, output_path: str | Path | None = None) -> Path:
         """Capture the current canvas state as a PNG image file for critique & refinement loops.
 
-        Attempts doc_export first, with fallback to render_preview or minimal valid PNG generation.
+        Attempts pure canvas export first, with fallback to render_preview or minimal valid PNG generation.
         """
         if output_path is None:
             fd, tmp = tempfile.mkstemp(prefix="photocraft_in_progress_", suffix=".png")
@@ -277,15 +383,7 @@ class PhotocraftMcpClient:
             path = Path(output_path)
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        exported = False
-
-        # 1. Attempt doc_export
-        try:
-            await self.doc_export(str(path.resolve()))
-            if path.exists() and path.stat().st_size > 0:
-                exported = True
-        except Exception as e:
-            logger.debug("doc_export attempt during capture_png: %s", e)
+        exported = await self.export_canvas_png(path)
 
         # 2. Fallback to render_preview / ui_screenshot
         if not exported:

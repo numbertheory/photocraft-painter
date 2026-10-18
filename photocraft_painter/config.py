@@ -30,8 +30,12 @@ class PainterConfig:
     photocraft_cli_bin: str = field(
         default_factory=lambda: os.getenv("PHOTOCRAFT_CLI_BIN") or "photocraft-cli"
     )
-    read_root: Path = field(default_factory=Path.cwd)
-    write_root: Path = field(default_factory=Path.cwd)
+    read_root: Path = field(
+        default_factory=lambda: Path(os.getenv("PHOTOCRAFT_READ_ROOT") or "/")
+    )
+    write_root: Path = field(
+        default_factory=lambda: Path(os.getenv("PHOTOCRAFT_WRITE_ROOT") or "/")
+    )
 
     # Drawing animation speed and canvas geometry
     step_delay: float = 0.12  # seconds between drawing steps to visualize progress live

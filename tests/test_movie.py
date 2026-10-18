@@ -300,3 +300,74 @@ async def test_export_document_movie_routes_to_psd_path():
         assert out_mp4.exists()
         assert out_mp4.stat().st_size > 0
 
+
+@pytest.mark.anyio
+async def test_export_document_movie_temp_png_per_layer_with_background():
+    """Verify export_document_movie exports each layer to its own temp PNG with Background visible and never screen-records."""
+    mock_client = AsyncMock()
+    mock_client.doc_inspect.return_value = {
+        "title": "Temp PNG Layer Export Test",
+        "width": 2,
+        "height": 2,
+        "layers": [
+            {"id": 303, "name": "Frame 3", "visible": True},
+            {"id": 302, "name": "Frame 2", "visible": True},
+            {"id": 301, "name": "Frame 1", "visible": True},
+            {"id": 300, "name": "Background", "visible": True},
+        ],
+    }
+
+    minimal_png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001149444154789c63f8cfc0f01f8419600c0047ca07f967596eb70000000049454e44ae426082"
+    )
+    exported_temp_files: list[str] = []
+    visibility_state: dict[int, bool] = {300: True, 301: True, 302: True, 303: True}
+    snapshots_at_export: list[dict[int, bool]] = []
+
+    async def fake_command_run(cmd: str, params: dict):
+        if cmd == "layer.setProps":
+            lid = params.get("layer")
+            if lid in visibility_state and "visible" in params:
+                visibility_state[lid] = bool(params["visible"])
+        return {"status": "ok"}
+
+    async def fake_doc_export(path_str: str):
+        exported_temp_files.append(path_str)
+        snapshots_at_export.append(dict(visibility_state))
+        Path(path_str).write_bytes(minimal_png)
+        return {"path": path_str}
+
+    mock_client.command_run.side_effect = fake_command_run
+    mock_client.doc_export.side_effect = fake_doc_export
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_mp4 = Path(tmpdir) / "stitched_temp_layers.mp4"
+        res = await export_document_movie(
+            client=mock_client,
+            fps=5.0,
+            output_path=out_mp4,
+        )
+
+        assert res["status"] == "ok"
+        assert res["frames_count"] == 3
+        assert res["crop_box"] is None
+        assert out_mp4.exists() and out_mp4.stat().st_size > 0
+
+        # Screen-recording fallback (render_preview) must NOT have been called
+        mock_client.render_preview.assert_not_called()
+
+        # Verify 3 sequential PNG files were exported into the system temporary directory in order
+        assert len(exported_temp_files) == 3
+        assert exported_temp_files[0].endswith("frame_0001.png")
+        assert exported_temp_files[1].endswith("frame_0002.png")
+        assert exported_temp_files[2].endswith("frame_0003.png")
+
+        # Verify Background (300) was visible in every frame alongside only the active Frame layer in order (301, 302, 303)
+        assert snapshots_at_export[0] == {300: True, 301: True, 302: False, 303: False}
+        assert snapshots_at_export[1] == {300: True, 301: False, 302: True, 303: False}
+        assert snapshots_at_export[2] == {300: True, 301: False, 302: False, 303: True}
+
+        # Verify all layers (including Background) are restored to visible after export
+        assert visibility_state == {300: True, 301: True, 302: True, 303: True}
+
+

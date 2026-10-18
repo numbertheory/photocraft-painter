@@ -5394,6 +5394,506 @@ def plan_painterly_geometric_shape(
     }
 
 
+def plan_painterly_rabbit(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "cartoon",
+    model: str = "built-in",
+) -> dict[str, Any]:
+    """Generate a cartoon/painterly illustration of a white rabbit hopping across a lush meadow field.
+
+    Strictly separates Layer 1 (Background Field & Sky) from Layers 2-4 (Rabbit Character solid fills,
+    cel shading, facial features, and crisp ink outlines) so animations keep the field stationary while
+    the fully colored white rabbit hops cleanly across the screen.
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+    lowered = prompt.lower()
+
+    # Determine rabbit fur color (defaults to pure white #ffffff for white rabbit / cartoon rabbit)
+    fur_color = "#ffffff"
+    fur_shadow = "#e2e8f0"
+    inner_ear_color = "#ffb6c1"
+    nose_color = "#ff6b8b"
+    ink_color = "#111116"
+    if "brown" in lowered:
+        fur_color = "#d2996c"
+        fur_shadow = "#b0784c"
+    elif "gray" in lowered or "grey" in lowered:
+        fur_color = "#cbd5e1"
+        fur_shadow = "#94a3b8"
+    elif "pink" in lowered:
+        fur_color = "#ffc2d1"
+        fur_shadow = "#ff8fa3"
+
+    bg_color = "#87ceeb"
+    if style_preset.id in ("pencil", "sketchy"):
+        bg_color = "#ffffff"
+
+    # =========================================================================
+    # LAYER 1: STATIONARY BACKGROUND (SKY, SUN, CLOUDS, HILLS, FIELD, FLOWERS)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Background Field & Sky"}})
+
+    if style_preset.id != "pencil":
+        # Sky upper atmosphere wash
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Sky Atmosphere Wash",
+                "points": stroke_line(s(40), s(90), s(760), s(90), steps=16),
+                "size": s(140.0),
+                "color": "#7ec8e3",
+                "hardness": 0.85,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Sky Mid Horizon Wash",
+                "points": stroke_line(s(40), s(260), s(760), s(260), steps=16),
+                "size": s(160.0),
+                "color": "#a2d9f7",
+                "hardness": 0.85,
+                "opacity": 1.0,
+            },
+        })
+        # Golden Sun in top right
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Sun Golden Disk",
+                "points": [[s(680), s(105), 1.0], [s(682), s(106), 1.0]],
+                "size": s(88.0),
+                "color": "#ffd54f",
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Fluffy white clouds
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Fluffy Cloud Left",
+                "points": stroke_line(s(150), s(125), s(270), s(125), steps=10),
+                "size": s(52.0),
+                "color": "#ffffff",
+                "hardness": 0.92,
+                "opacity": 0.96,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Fluffy Cloud Center",
+                "points": stroke_line(s(430), s(145), s(550), s(145), steps=10),
+                "size": s(48.0),
+                "color": "#ffffff",
+                "hardness": 0.92,
+                "opacity": 0.96,
+            },
+        })
+        # Distant rolling green meadow hill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Distant Rolling Meadow Hill",
+                "points": stroke_bezier((s(0), s(520)), (s(260), s(465)), (s(540), s(485)), (s(800), s(525)), steps=24),
+                "size": s(130.0),
+                "color": "#66bb6a",
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+        # Foreground lush green field fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Meadow Field Upper Sweep",
+                "points": stroke_line(s(0), s(610), s(800), s(610), steps=20),
+                "size": s(160.0),
+                "color": "#4caf50",
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Meadow Field Lower Sweep",
+                "points": stroke_line(s(0), s(735), s(800), s(735), steps=20),
+                "size": s(160.0),
+                "color": "#43a047",
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+
+    # Meadow horizon line
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Background Horizon Hill Line",
+            "points": stroke_bezier((s(0), s(505)), (s(260), s(455)), (s(540), s(475)), (s(800), s(510)), steps=24),
+            "size": s(4.5),
+            "color": "#2e7d32" if style_preset.id != "pencil" else "#4b5563",
+            "hardness": 0.95,
+            "opacity": 1.0,
+        },
+    })
+
+    # Stationary grass tufts & meadow wildflowers on background
+    for g_idx, (gx, gy) in enumerate([
+        (s(95), s(635)), (s(265), s(660)), (s(430), s(615)),
+        (s(585), s(650)), (s(710), s(625)), (s(350), s(710)),
+    ], start=1):
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Background Grass Tuft {g_idx}",
+                "points": [[gx - s(10), gy - s(12), 0.9], [gx, gy, 1.0], [gx + s(10), gy - s(14), 0.9]],
+                "size": s(3.8),
+                "color": "#1b5e20" if style_preset.id != "pencil" else "#4b5563",
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+        if style_preset.id != "pencil" and g_idx <= 4:
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": f"Background Meadow Flower {g_idx}",
+                    "points": [[gx + s(18), gy - s(8), 1.0], [gx + s(19), gy - s(7), 1.0]],
+                    "size": s(11.0),
+                    "color": "#fff176" if g_idx % 2 == 1 else "#f48fb1",
+                    "hardness": 0.98,
+                    "opacity": 1.0,
+                },
+            })
+
+    # =========================================================================
+    # LAYER 2: RABBIT CHARACTER SOLID OPAQUE FILLS (100% OPAQUE ON EVERY CEL)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Rabbit Character Solid Fills"}})
+
+    # Local cast shadow directly beneath rabbit
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rabbit Cast Shadow Under Feet",
+            "points": stroke_line(s(140), s(572), s(245), s(572), steps=10),
+            "size": s(22.0),
+            "color": "#2e7d32" if style_preset.id != "pencil" else "#9ca3af",
+            "hardness": 0.85,
+            "opacity": 0.65,
+        },
+    })
+
+    if style_preset.id != "pencil":
+        # 1. Fluffy cotton tail solid white fill (fills r=18 tail outline edge-to-edge)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Tail Solid White Fill",
+                "points": stroke_line(s(110), s(502), s(114), s(502), steps=6),
+                "size": s(33.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 2. Plump rabbit body/torso multi-pass solid white interior fills (strictly inside back/belly outlines)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Body Outer Solid White Fill",
+                "points": stroke_enclosed_oval(s(182), s(492), s(34), s(20)),
+                "size": s(30.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Body Core Solid White Fill",
+                "points": stroke_line(s(150), s(494), s(216), s(488), steps=12),
+                "size": s(44.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Chest & Shoulder Solid White Fill",
+                "points": stroke_line(s(195), s(484), s(228), s(472), steps=10),
+                "size": s(36.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 3. Hind leg and hopping foot solid white fills (follows exact curve inside hind leg outline)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Hind Thigh Solid White Fill",
+                "points": stroke_bezier((s(156), s(514)), (s(144), s(544)), (s(162), s(556)), (s(198), s(553)), steps=14),
+                "size": s(22.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Hind Hopping Foot Solid White Fill",
+                "points": stroke_line(s(154), s(542), s(194), s(552), steps=10),
+                "size": s(18.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 4. Front paws solid white fills (strictly inside front paw outline)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Front Foreleg & Paw Solid White Fill",
+                "points": stroke_line(s(232), s(502), s(244), s(534), steps=8),
+                "size": s(16.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 5. Round rabbit head & cheeks solid white fills (inside head outline centered at (238, 434) with rx=36, ry=32)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Head Outer Solid White Fill",
+                "points": stroke_enclosed_oval(s(238), s(434), s(20), s(17)),
+                "size": s(30.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Head Core Solid White Fill",
+                "points": stroke_line(s(226), s(434), s(250), s(434), steps=8),
+                "size": s(38.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 6. Long upright rabbit ears solid white fills + pink inner ear fills (strictly inside ear outlines)
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Left Ear Solid White Fill",
+                "points": stroke_bezier((s(218), s(404)), (s(210), s(370)), (s(211), s(350)), (s(212), s(344)), steps=14),
+                "size": s(15.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Right Ear Solid White Fill",
+                "points": stroke_bezier((s(241), s(404)), (s(239), s(368)), (s(240), s(348)), (s(241), s(340)), steps=14),
+                "size": s(15.0),
+                "color": fur_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Left Inner Ear Pink Fill",
+                "points": stroke_line(s(217), s(396), s(212), s(352), steps=10),
+                "size": s(8.0),
+                "color": inner_ear_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Right Inner Ear Pink Fill",
+                "points": stroke_line(s(241), s(394), s(241), s(348), steps=10),
+                "size": s(8.0),
+                "color": inner_ear_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+        # 7. Subtle cel shading along lower belly and hind leg
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Belly Underside Cel Shadow",
+                "points": stroke_bezier((s(145), s(516)), (s(182), s(530)), (s(210), s(522)), (s(228), s(504)), steps=14),
+                "size": s(12.0),
+                "color": fur_shadow,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 3: RABBIT CRISP CARTOON INK OUTLINES
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "3. Rabbit Ink Outlines"}})
+
+    rabbit_outlines = [
+        ("Rabbit Ink: Fluffy Cotton Tail Outline", stroke_enclosed_oval(s(112), s(502), s(18), s(18)), s(4.8)),
+        ("Rabbit Ink: Arched Back & Rump Outline", stroke_bezier((s(128), s(495)), (s(145), s(448)), (s(195), s(445)), (s(222), s(462)), steps=22), s(5.0)),
+        ("Rabbit Ink: Belly & Chest Outline", stroke_bezier((s(134), s(518)), (s(178), s(536)), (s(212), s(524)), (s(232), s(498)), steps=22), s(5.0)),
+        ("Rabbit Ink: Hind Leg & Hopping Foot Outline", stroke_bezier((s(152), s(510)), (s(132), s(548)), (s(155), s(566)), (s(208), s(558)), steps=22), s(4.8)),
+        ("Rabbit Ink: Front Paw Outline", stroke_bezier((s(224), s(500)), (s(236), s(545)), (s(256), s(545)), (s(246), s(496)), steps=18), s(4.6)),
+        ("Rabbit Ink: Round Head & Cheek Outline", stroke_enclosed_oval(s(238), s(434), s(36), s(32)), s(5.0)),
+        ("Rabbit Ink: Left Long Ear Outline", stroke_bezier((s(210), s(408)), (s(198), s(332)), (s(222), s(328)), (s(226), s(406)), steps=24), s(4.8)),
+        ("Rabbit Ink: Right Long Ear Outline", stroke_bezier((s(232), s(406)), (s(228), s(328)), (s(254), s(324)), (s(250), s(408)), steps=24), s(4.8)),
+    ]
+    for o_name, o_pts, o_sz in rabbit_outlines:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": o_name,
+                "points": o_pts,
+                "size": o_sz if style_preset.id != "pencil" else 2.2,
+                "color": ink_color if style_preset.id != "pencil" else "#374151",
+                "hardness": 1.0 if style_preset.id != "pencil" else 0.65,
+                "opacity": 1.0 if style_preset.id != "pencil" else 0.6,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 4: RABBIT FACIAL FEATURES (EYE, CATCHLIGHT, PINK NOSE, SMILE, WHISKERS)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "4. Rabbit Facial Features"}})
+
+    if style_preset.id != "pencil":
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Facial Feature: Rosy Cheek Blush",
+                "points": [[s(248), s(446), 1.0], [s(252), s(446), 1.0]],
+                "size": s(13.0),
+                "color": "#ffccd5",
+                "hardness": 0.9,
+                "opacity": 0.95,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Facial Feature: Cute Pink Nose",
+                "points": [[s(270), s(432), 1.0], [s(272), s(433), 1.0]],
+                "size": s(9.5),
+                "color": nose_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rabbit Facial Feature: Expressive Dark Eye Pupil",
+            "points": [[s(248), s(422), 1.0], [s(249), s(423), 1.0]],
+            "size": s(11.5),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    if style_preset.id != "pencil":
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Rabbit Facial Feature: Eye White Specular Catchlight",
+                "points": [[s(246), s(419), 1.0], [s(247), s(420), 1.0]],
+                "size": s(4.2),
+                "color": "#ffffff",
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rabbit Facial Feature: Happy Smile Mouth Curve",
+            "points": stroke_bezier((s(256), s(442)), (s(262), s(448)), (s(268), s(446)), (s(271), s(438)), steps=10),
+            "size": s(3.0),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rabbit Facial Feature: Upper Whisker",
+            "points": stroke_line(s(258), s(436), s(286), s(430), steps=6),
+            "size": s(2.2),
+            "color": ink_color,
+            "hardness": 0.95,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Rabbit Facial Feature: Lower Whisker",
+            "points": stroke_line(s(258), s(440), s(285), s(442), steps=6),
+            "size": s(2.2),
+            "color": ink_color,
+            "hardness": 0.95,
+            "opacity": 0.9,
+        },
+    })
+
+    title = format_document_title("Cartoon White Rabbit Hopping", style=style, detail_level=detail, model=model)
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": bg_color,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+    }
+
+
 def plan_fallback(
     prompt: str,
     width: int = 800,
@@ -5422,6 +5922,9 @@ def plan_fallback(
             shape_name=shape_name,
             target_color=target_color,
         )
+
+    if any(k in lowered for k in ["rabbit", "bunny", "hare"]):
+        return plan_painterly_rabbit(prompt, width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
         return plan_painterly_pikachu(width, height, detail_level, style=style, model=model)

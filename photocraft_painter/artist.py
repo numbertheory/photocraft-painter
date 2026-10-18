@@ -316,7 +316,10 @@ async def execute_live_animation(
     if not frames:
         return await execute_live_drawing(client, plan, config, on_step_progress, on_step_error, create_canvas)
 
-    total_steps = sum(len(f.get("steps", [])) for f in frames)
+    background_steps: list[dict[str, Any]] = plan.get("background_steps") or (
+        frames[0].get("background_steps", []) if frames else []
+    )
+    total_steps = len(background_steps) + sum(len(f.get("steps", [])) for f in frames)
     current_step_global = 0
     total_succeeded = 0
 
@@ -343,13 +346,51 @@ async def execute_live_animation(
     prev_frame_id: int | None = None
 
     try:
+        # 2. Draw stationary background ONCE and bake into the Background layer
+        if background_steps:
+            try:
+                await client.command_run("layer.new.layer", {"name": "Background Scenery"})
+            except Exception:
+                pass
+            for b_idx, b_step in enumerate(background_steps, start=1):
+                cmd = b_step.get("cmd") or b_step.get("id") or "paint.stroke"
+                params = b_step.get("params", {})
+                name = params.get("name") or f"Background Step {b_idx}"
+                current_step_global += 1
+
+                if on_step_progress:
+                    on_step_progress(current_step_global, total_steps, f"[Background] {name}", b_step)
+
+                try:
+                    await client.command_run(cmd, params)
+                    total_succeeded += 1
+                except Exception as e:
+                    logger.warning("Background step %d failed: %s", b_idx, e)
+                    if on_step_error:
+                        on_step_error(current_step_global, total_steps, f"[Background] {name}", str(e))
+
+                if config.step_delay > 0:
+                    await asyncio.sleep(config.step_delay)
+
+            try:
+                await client.command_run("layer.flattenImage", {})
+            except Exception as e:
+                logger.debug("Could not flatten background image: %s", e)
+
+        # 3. Draw each animation cel (Frame 1..N) containing ONLY the character
         for f_idx, frame in enumerate(frames, start=1):
             frame_name = frame.get("name") or f"Frame {f_idx}"
             is_base = frame.get("is_base", f_idx == 1)
             steps = frame.get("steps", [])
 
             if is_base:
-                # Frame 1: Execute base artwork steps
+                # Create a clean transparent cel layer for Frame 1 above the stationary Background
+                try:
+                    await client.command_run("layer.new.layer", {"name": "Frame 1"})
+                except Exception:
+                    pass
+
+                # Frame 1: Execute character cel steps
                 for s_idx, step in enumerate(steps, start=1):
                     cmd = step.get("cmd") or step.get("id") or "paint.stroke"
                     params = step.get("params", {})

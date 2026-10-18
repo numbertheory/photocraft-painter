@@ -703,14 +703,16 @@ async def async_main(args: argparse.Namespace) -> None:
                 console.print(
                     "\nYou can start it manually in another terminal with:\n"
                     f"  [cyan]photocraft --control {config.control_port} "
-                    f"--control-token-file {config.control_token_file}[/]\n"
+                    f"--control-token-file {config.control_token_file} "
+                    f"--automation-read-root / --automation-write-root /[/]\n"
                 )
                 return
         else:
             console.print(
                 "\nPlease start PhotoCraft in another terminal with:\n"
                 f"  [cyan]photocraft --control {config.control_port} "
-                f"--control-token-file {config.control_token_file}[/]\n"
+                f"--control-token-file {config.control_token_file} "
+                f"--automation-read-root / --automation-write-root /[/]\n"
             )
             return
 

@@ -193,7 +193,7 @@ ANIMATION_KEYFRAME_INSTRUCTION = """
 This drawing is strictly FRAME 1 (KEYFRAME AT t=0) of a multi-frame animation (steps > 1).
 You MUST draw ONLY A SINGLE INSTANCE of the animated subject in its initial starting position / starting pose!
 1. STRICTLY ONE SUBJECT:
-   - Draw ONLY ONE ball, ONE character, ONE vehicle, or ONE creature in its starting pose at the beginning of the motion.
+   - Draw ONLY ONE ball, ONE character, ONE vehicle, or ONE creature in its starting pose at the beginning of the motion (on the left side of the canvas, e.g. x = 140..280, if moving across the screen).
    - For example, if the prompt is "a ball bouncing across the screen", draw ONLY ONE BALL (e.g. at the starting position on the left side or top-left) and an optional static ground/floor line.
    - For example, if the prompt is "a person walking across the screen", draw ONLY ONE PERSON at their starting stride on one side.
 2. ABSOLUTELY FORBIDDEN:
@@ -201,9 +201,10 @@ You MUST draw ONLY A SINGLE INSTANCE of the animated subject in its initial star
    - NEVER draw multiple balls, multiple duplicate characters, or a comic-strip progression across the canvas!
    - NEVER draw motion path arcs, dashed flight trajectory lines, or timing chart lines!
    - Drawing multiple stages in Frame 1 ruins the animation because subsequent frames duplicate and animate the entire layer. Frame 1 MUST depict only the single subject at the start of its movement.
-3. ENVIRONMENT & SUBJECT LAYERING:
-   - If drawing an environment/floor/ground line, place it on an early layer (e.g. "Background Ground").
-   - Place the single animated subject on its own layer (e.g. "Subject" or "Ball").
+3. STRICT CEL ANIMATION SEPARATION (STATIONARY BACKGROUND vs. SOLID CHARACTER CEL):
+   - Layer 1 ("1. Background Environment"): Place ALL stationary background elements (sky, sun, clouds, hills, field, meadow, grass tufts, flowers, trees, ground line) on this first layer so the background is drawn ONCE and stays stationary!
+   - Layer 2 ("2. Character Solid Color Fills"): Place the single animated character on its own layer. You MUST completely fill the interior of every character part (body, torso, head, ears, legs, paws, tail) using thick, 100% opaque `paint.stroke` sweeps (opacity: 1.0, hardness: 0.98, size: 24-55, e.g. "#ffffff" for a white rabbit, "#ffb6c1" for inner ears) BEFORE drawing ink outlines! Do NOT leave the character hollow or transparent, and do NOT use `shape.create` or `paint.bucket` for the animated character!
+   - Layer 3 ("3. Character Cel Shading, Features & Ink Outlines"): Draw cel shading, eyes, dark pupils, white catchlights, nose, mouth, whiskers, and crisp black ink outlines ("#111116", size: 4-6, hardness: 1.0, opacity: 1.0) on top of the character's solid fills.
 """
 
 
@@ -783,7 +784,7 @@ def densify_artwork_plan(
         size = float(p.get("size") or 10.0)
         is_feature = is_facial_feature_stroke(name)
 
-        if any(k in name for k in ("highlight", "glint", "sparkle", "white", "rim", "glow")):
+        if any(k in name for k in ("highlight", "glint", "sparkle", "catchlight", "rim light", "glow")):
             highlights.append(s)
         elif not is_feature and any(k in name for k in ("shade", "shadow", "dark", "under", "belly", "depth", "volume")):
             shadings.append(s)
@@ -802,9 +803,9 @@ def densify_artwork_plan(
     if not highlights:
         highlights = existing_strokes
 
-    q_wash = int(round(needed * 0.40))
-    q_shade = int(round(needed * 0.30))
-    q_contour = int(round(needed * 0.18))
+    q_wash = int(round(needed * 0.60)) if style_preset.id == "cartoon" else int(round(needed * 0.40))
+    q_shade = int(round(needed * 0.22)) if style_preset.id == "cartoon" else int(round(needed * 0.30))
+    q_contour = int(round(needed * 0.14)) if style_preset.id == "cartoon" else int(round(needed * 0.18))
     q_hi = needed - (q_wash + q_shade + q_contour)
 
     children_by_parent: dict[int, list[dict[str, Any]]] = {}
@@ -841,26 +842,42 @@ def densify_artwork_plan(
         dy = pts[-1][1] - pts[0][1]
         L = max(1.0, math.hypot(dx, dy))
         nx, ny = -dy / L, dx / L
+        cx_wash = sum(pt[0] for pt in pts) / len(pts)
+        cy_wash = sum(pt[1] for pt in pts) / len(pts)
 
         passes_for_this = max(1, (q_wash - w_count) // max(1, len(washes)) + 1)
         for pass_i in range(1, passes_for_this + 1):
             if w_count >= q_wash:
                 break
             w_count += 1
-            dist = (pass_i * 0.22) * size * (1 if w_count % 2 == 1 else -1)
-            wob = style_preset.wobble * 2.0
-            off_pts = [
-                [
-                    round(pt[0] + nx * dist + math.sin(i * 0.8 + w_count) * wob, 1),
-                    round(pt[1] + ny * dist + math.cos(i * 0.8 + w_count) * wob, 1),
+            if style_preset.id == "cartoon":
+                # Contract slightly inward toward the wash centroid so fills reinforce interior solidity
+                # without bleeding outside black ink contours or duplicating circular suns/dots.
+                # For wide horizontal background bands (sky/hills), preserve full X span so edges stay flush.
+                shrink = min(0.35, pass_i * 0.08)
+                is_wide_band = abs(pts[-1][0] - pts[0][0]) >= 500.0
+                off_pts = [
+                    [
+                        round(pt[0] if is_wide_band else (pt[0] + (cx_wash - pt[0]) * shrink), 1),
+                        round(pt[1] + (cy_wash - pt[1]) * shrink, 1),
+                    ]
+                    for pt in pts
                 ]
-                for i, pt in enumerate(pts)
-            ]
-            wash_color = style_preset.adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06)
+            else:
+                dist = (pass_i * 0.22) * size * (1 if w_count % 2 == 1 else -1)
+                wob = style_preset.wobble * 2.0
+                off_pts = [
+                    [
+                        round(pt[0] + nx * dist + math.sin(i * 0.8 + w_count) * wob, 1),
+                        round(pt[1] + ny * dist + math.cos(i * 0.8 + w_count) * wob, 1),
+                    ]
+                    for i, pt in enumerate(pts)
+                ]
+            wash_color = col if style_preset.id == "cartoon" else style_preset.adjust_color(col, 0.94 if w_count % 2 == 0 else 1.06)
             wash_name = f"{name} (Pencil Gesture {w_count})" if style_preset.id == "pencil" else f"{name} ({style_preset.name} Wash {w_count})"
-            wash_size = max(1.5, min(2.8, round(size * 0.1, 1))) if style_preset.id == "pencil" else max(8.0, round(size * (0.85 + 0.15 * (w_count % 2)), 1))
-            wash_hard = 0.6 if style_preset.id == "pencil" else round(hardness * 0.9, 2)
-            wash_opac = 0.4 if style_preset.id == "pencil" else round(max(0.35, opacity * 0.88), 2)
+            wash_size = max(1.5, min(2.8, round(size * 0.1, 1))) if style_preset.id == "pencil" else max(10.0 if style_preset.id == "cartoon" else 8.0, round(size * (0.88 if style_preset.id == "cartoon" else (0.85 + 0.15 * (w_count % 2))), 1))
+            wash_hard = 0.6 if style_preset.id == "pencil" else (0.98 if style_preset.id == "cartoon" else round(hardness * 0.9, 2))
+            wash_opac = 0.4 if style_preset.id == "pencil" else (1.0 if style_preset.id == "cartoon" else round(max(0.35, opacity * 0.88), 2))
             add_child(
                 s,
                 {
@@ -913,42 +930,50 @@ def densify_artwork_plan(
                 hatch_hardness = 0.9
                 hatch_opacity = 0.65
                 hatch_label = f"{name} (Pencil Hatch {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
             elif style_preset.id == "cartoon":
-                hatch_color = style_preset.adjust_color(col, 0.75)
-                hatch_size = max(4.0, round(size * 0.45, 1))
-                hatch_hardness = 1.0
-                hatch_opacity = 1.0
+                # In Cartoon/Cel style, shadows are smooth contiguous cel curves along pts—never diagonal ticks
+                hatch_color = col or "#dce3ea"
+                hatch_size = max(5.0, round(size * 0.80, 1))
+                hatch_hardness = 0.98
+                hatch_opacity = float(p.get("opacity") or 1.0)
                 hatch_label = f"{name} (Cel Shadow {sh_count})"
+                hatch_pts = [[round(pt[0], 1), round(pt[1], 1)] for pt in pts]
             elif style_preset.id == "dreamlike":
                 hatch_color = style_preset.adjust_color(col, 0.95)
                 hatch_size = max(6.0, round(size * 0.5, 1))
                 hatch_hardness = 0.45
                 hatch_opacity = 0.7
                 hatch_label = f"{name} (Luminous Shade {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
             elif style_preset.id == "abstract":
                 hatch_color = style_preset.adjust_color(col, 0.8)
                 hatch_size = max(3.0, round(size * 0.3, 1))
                 hatch_hardness = 0.95
                 hatch_opacity = 0.9
                 hatch_label = f"{name} (Vector Plane {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
             elif style_preset.id == "cubism":
                 hatch_color = style_preset.adjust_color(col, 0.72)
                 hatch_size = max(3.5, round(size * 0.38, 1))
                 hatch_hardness = 0.98
                 hatch_opacity = 0.95
                 hatch_label = f"{name} (Cubist Facet Plane {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
             elif style_preset.id == "pencil":
                 hatch_color = style_preset.adjust_color(col, 0.85) or "#4b5563"
                 hatch_size = max(1.2, min(2.4, round(size * 0.12, 1)))
                 hatch_hardness = 0.65
                 hatch_opacity = 0.45
                 hatch_label = f"{name} (Pencil Cross-Hatch {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
             else:
                 hatch_color = style_preset.adjust_color(col, 0.88)
                 hatch_size = max(2.0, min(5.0, round(size * 0.22, 1)))
                 hatch_hardness = 0.85
                 hatch_opacity = 0.7
                 hatch_label = f"{name} (Hatch Tone {sh_count})"
+                hatch_pts = stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4)
 
             add_child(
                 s,
@@ -956,7 +981,7 @@ def densify_artwork_plan(
                     "cmd": "paint.stroke",
                     "params": {
                         "name": hatch_label,
-                        "points": stroke_line(hx0, hy0, hx1, hy1, steps=8, wobble=style_preset.wobble * 0.4),
+                        "points": hatch_pts,
                         "size": hatch_size,
                         "color": hatch_color,
                         "hardness": hatch_hardness,
@@ -987,8 +1012,8 @@ def densify_artwork_plan(
             if c_count >= q_contour:
                 break
             c_count += 1
-            dist = 1.6 * (1 if c_count % 2 == 1 else -1)
-            wob = style_preset.wobble * 1.5
+            dist = 0.0 if style_preset.id == "cartoon" else 1.6 * (1 if c_count % 2 == 1 else -1)
+            wob = 0.0 if style_preset.id == "cartoon" else style_preset.wobble * 1.5
             off_pts = [
                 [
                     round(pt[0] + nx * dist + math.sin(i * 1.2 + c_count) * wob, 1),
@@ -999,7 +1024,7 @@ def densify_artwork_plan(
 
             if style_preset.id == "cartoon":
                 outline_color = "#111116"
-                outline_size = max(2.5, round(size * 0.85 * style_preset.outline_size_scale, 1))
+                outline_size = max(2.5, round(size * 0.90, 1))
                 outline_hardness = 1.0
                 outline_opacity = 1.0
                 label = f"{name} (Ink Contour {c_count})"
@@ -1070,15 +1095,20 @@ def densify_artwork_plan(
             if h_count >= q_hi:
                 break
             h_count += 1
-            glen = max(8.0, size * 0.8)
-            g_off = (pass_i - 1) * 8.0 * (1 if pass_i % 2 == 1 else -1)
-            cx = mid_pt[0] + g_off
-            cy = mid_pt[1] + g_off
-            gx0 = round(cx - math.cos(ang) * glen * 0.5, 1)
-            hy_dir = math.sin(ang)
-            gy0 = round(cy - hy_dir * glen * 0.5, 1)
-            gx1 = round(cx + math.cos(ang) * glen * 0.5, 1)
-            gy1 = round(cy + hy_dir * glen * 0.5, 1)
+            if style_preset.id == "cartoon":
+                # Keep cartoon catchlights on the exact highlight point without scattering lines outside the eye
+                gx0, gy0 = round(mid_pt[0], 1), round(mid_pt[1], 1)
+                gx1, gy1 = round(mid_pt[0] + 0.5, 1), round(mid_pt[1] + 0.5, 1)
+            else:
+                glen = max(8.0, size * 0.8)
+                g_off = (pass_i - 1) * 8.0 * (1 if pass_i % 2 == 1 else -1)
+                cx = mid_pt[0] + g_off
+                cy = mid_pt[1] + g_off
+                gx0 = round(cx - math.cos(ang) * glen * 0.5, 1)
+                hy_dir = math.sin(ang)
+                gy0 = round(cy - hy_dir * glen * 0.5, 1)
+                gx1 = round(cx + math.cos(ang) * glen * 0.5, 1)
+                gy1 = round(cy + hy_dir * glen * 0.5, 1)
 
             if style_preset.id == "dreamlike":
                 hi_color = "#ffffff" if h_count % 2 == 0 else "#fbfcfc"
@@ -1088,7 +1118,7 @@ def densify_artwork_plan(
                 label = f"{name} (Aura Flare {h_count})"
             elif style_preset.id == "cartoon":
                 hi_color = "#ffffff"
-                hi_size = max(3.0, round(size * 0.75, 1))
+                hi_size = max(2.5, min(4.2, round(size * 0.75, 1)))
                 hi_hardness = 1.0
                 hi_opacity = 1.0
                 label = f"{name} (Cel Gleam {h_count})"

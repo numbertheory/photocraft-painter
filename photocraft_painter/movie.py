@@ -403,6 +403,112 @@ def export_movie_from_psd(
     }
 
 
+async def _export_active_canvas_to_png(
+    client: Any,
+    target_png: Path,
+    canvas_width: int = 800,
+    canvas_height: int = 800,
+) -> bool:
+    """Export the currently visible PhotoCraft canvas layers to a temporary PNG file.
+
+    Never takes a window screenshot of the PhotoCraft GUI; uses capability-scoped
+    `doc_export` or `edit.copyMerged` composited on the engine's canvas.
+    """
+    target_png.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Try direct doc_export to the temporary PNG path
+    if hasattr(client, "doc_export"):
+        try:
+            await client.doc_export(str(target_png.resolve()))
+            if target_png.exists() and target_png.stat().st_size > 0:
+                return True
+        except Exception as e:
+            logger.debug("Direct doc_export to %s failed: %s", target_png, e)
+
+        # 2. Try relative doc_export in cwd (if PhotoCraft write_root was scoped to cwd)
+        rel_name = f".photocraft_frame_{os.getpid()}_{id(target_png)}.png"
+        rel_path = Path.cwd() / rel_name
+        try:
+            await client.doc_export(rel_name)
+            if rel_path.exists() and rel_path.stat().st_size > 0:
+                shutil.move(str(rel_path), str(target_png))
+                if target_png.exists() and target_png.stat().st_size > 0:
+                    return True
+        except Exception as e:
+            logger.debug("Relative doc_export to %s failed: %s", rel_name, e)
+        finally:
+            if rel_path.exists():
+                try:
+                    rel_path.unlink()
+                except Exception:
+                    pass
+
+    # 3. Export pure merged canvas via edit.copyMerged + OS clipboard PNG read
+    try:
+        copy_res = await client.command_run("edit.copyMerged", {})
+        bounds = copy_res.get("bounds") if isinstance(copy_res, dict) else None
+        if isinstance(bounds, list) and len(bounds) == 4:
+            png_bytes = b""
+            if shutil.which("wl-paste"):
+                proc = subprocess.run(
+                    ["wl-paste", "--type", "image/png"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if proc.returncode == 0 and proc.stdout.startswith(b"\x89PNG"):
+                    png_bytes = proc.stdout
+            if not png_bytes and shutil.which("xclip"):
+                proc = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if proc.returncode == 0 and proc.stdout.startswith(b"\x89PNG"):
+                    png_bytes = proc.stdout
+            if png_bytes:
+                target_png.write_bytes(png_bytes)
+            elif shutil.which("magick"):
+                subprocess.run(
+                    ["magick", "clipboard:", f"png:{target_png.resolve()}"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+            if target_png.exists() and target_png.stat().st_size > 0:
+                bx, by, bw, bh = [int(v) for v in bounds]
+                if (
+                    canvas_width > 0
+                    and canvas_height > 0
+                    and (bx != 0 or by != 0 or bw != canvas_width or bh != canvas_height)
+                    and shutil.which("magick")
+                ):
+                    padded = target_png.with_suffix(".padded.png")
+                    geom = f"{'+' if bx >= 0 else ''}{bx}{'+' if by >= 0 else ''}{by}"
+                    res_pad = subprocess.run(
+                        [
+                            "magick",
+                            "-size",
+                            f"{canvas_width}x{canvas_height}",
+                            "xc:white",
+                            str(target_png.resolve()),
+                            "-geometry",
+                            geom,
+                            "-composite",
+                            str(padded.resolve()),
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    if res_pad.returncode == 0 and padded.exists() and padded.stat().st_size > 0:
+                        shutil.move(str(padded), str(target_png))
+                return True
+    except Exception as e:
+        logger.debug("edit.copyMerged frame export failed: %s", e)
+
+    return False
+
+
 async def export_document_movie(
     client: PhotocraftMcpClient | None = None,
     target_doc: str | int | None = None,
@@ -413,9 +519,9 @@ async def export_document_movie(
 ) -> dict[str, Any]:
     """Export all layers/frames of an open document in PhotoCraft (or a PSD file) as an MP4 movie.
 
-    Directly extracts and composites native document layers with ImageMagick (`magick`)
-    over the background, and encodes the MP4 movie using `ffmpeg`.
-    If direct layer export is unavailable, falls back to canvas preview capture.
+    Exports each animation frame layer (with the Background layer visible) into its own
+    temporary PNG file in the system temporary directory, and stitches them together in
+    order using `ffmpeg` and `magick`.
 
     Returns:
         dict containing "status", "path", "frames_count", "fps", "duration", "size_bytes",
@@ -491,6 +597,8 @@ async def export_document_movie(
         return {"status": "error", "message": "No active document or layers found in PhotoCraft"}
 
     doc_title = info.get("name") or info.get("title") or "PhotoCraft Animation"
+    doc_width = int(info.get("width") or 800)
+    doc_height = int(info.get("height") or 800)
     all_layers = info.get("layers", [])
     if len(all_layers) < 2:
         return {
@@ -511,102 +619,64 @@ async def export_document_movie(
     if on_status and folder_warning:
         on_status(folder_warning)
 
-    # 5. Check if document already exists on disk as a saved PSD file
-    search_paths = [
-        Path.cwd() / f"{doc_title}.psd",
-        Path.cwd() / doc_title,
-        Path("~/Pictures").expanduser() / f"{doc_title}.psd",
-        Path("~/Pictures").expanduser() / doc_title,
-    ]
-    if info.get("path"):
-        search_paths.insert(0, Path(info["path"]))
+    # 5. Identify Background layer and ordered animation frame layers
+    bg_layer = next(
+        (l for l in reversed(all_layers) if str(l.get("name", "")).strip().lower() == "background"),
+        all_layers[-1],
+    )
+    bg_id = bg_layer.get("id")
 
-    for sp in search_paths:
-        if sp.exists() and sp.is_file() and sp.suffix.lower() == ".psd":
-            if on_status:
-                on_status(f"Found saved PSD '{sp.name}'. Exporting layers directly...")
-            res = export_movie_from_psd(
-                psd_path=sp,
-                output_mp4=final_output_path,
-                fps=fps_val,
-                on_frame_progress=on_frame_progress,
-                on_status=on_status,
-            )
-            if res.get("status") == "ok":
-                res["warning"] = folder_warning
-                return res
+    frame_numbered: list[tuple[int, dict[str, Any]]] = []
+    other_layers: list[dict[str, Any]] = []
 
-    # 6. Attempt direct export by saving a temporary PSD copy via PhotoCraft
+    for l in all_layers:
+        if l.get("id") == bg_id:
+            continue
+        lname = str(l.get("name", "")).strip()
+        m = re.match(r"^Frame\s*(\d+)$", lname, re.IGNORECASE)
+        if m:
+            frame_numbered.append((int(m.group(1)), l))
+        else:
+            other_layers.append(l)
+
+    frame_layers: list[dict[str, Any]] = []
+    if frame_numbered:
+        frame_numbered.sort(key=lambda x: x[0])
+        frame_layers = [item[1] for item in frame_numbered]
+    else:
+        frame_layers = list(reversed(other_layers))
+
+    if len(frame_layers) < 2:
+        return {
+            "status": "error",
+            "message": f"Found only {len(frame_layers)} frame layer(s). Need at least 2 frames to generate a movie.",
+        }
+
+    total_frames = len(frame_layers)
+
+    # 6. Export each frame layer (with Background visible) to its own PNG in system temp directory
     with tempfile.TemporaryDirectory(prefix="photocraft_movie_") as tmpdir:
         tmp_dir_path = Path(tmpdir)
-        temp_psd = tmp_dir_path / f"export_{re.sub(r'[^a-zA-Z0-9_-]', '_', doc_title)}.psd"
-        saved_copy = False
-        try:
-            await client.command_run("file.saveACopy", {"path": str(temp_psd.resolve())})
-            if temp_psd.exists() and temp_psd.stat().st_size > 0:
-                saved_copy = True
-        except Exception as e:
-            logger.debug("Direct PSD save not supported or failed: %s", e)
-
-        if saved_copy:
-            if on_status:
-                on_status("Exported native PSD layers. Rendering movie frames directly from document...")
-            res = export_movie_from_psd(
-                temp_psd,
-                final_output_path,
-                fps=fps_val,
-                on_frame_progress=on_frame_progress,
-                on_status=on_status,
-            )
-            if res.get("status") == "ok":
-                res["warning"] = folder_warning
-                return res
-
-        # 7. Fallback: Sequential layer isolation and screen/canvas capture
-        bg_id = all_layers[-1].get("id")
-
-        # Separate frames: either Frame 1..N or top-to-bottom layers
-        frame_numbered: list[tuple[int, dict[str, Any]]] = []
-        other_layers: list[dict[str, Any]] = []
-
-        for l in all_layers:
-            if l.get("id") == bg_id:
-                continue
-            lname = str(l.get("name", "")).strip()
-            m = re.match(r"^Frame\s*(\d+)$", lname, re.IGNORECASE)
-            if m:
-                frame_numbered.append((int(m.group(1)), l))
-            else:
-                other_layers.append(l)
-
-        frame_layers: list[dict[str, Any]] = []
-        if frame_numbered:
-            frame_numbered.sort(key=lambda x: x[0])
-            frame_layers = [item[1] for item in frame_numbered]
-        else:
-            frame_layers = list(reversed(other_layers))
-
-        if len(frame_layers) < 2:
-            return {
-                "status": "error",
-                "message": f"Found only {len(frame_layers)} frame layer(s). Need at least 2 frames to generate a movie.",
-            }
-
-        total_frames = len(frame_layers)
         raw_frames_dir = tmp_dir_path / "raw"
         proc_frames_dir = tmp_dir_path / "proc"
         raw_frames_dir.mkdir(parents=True, exist_ok=True)
         proc_frames_dir.mkdir(parents=True, exist_ok=True)
 
+        if on_status:
+            on_status(
+                f"Exporting {total_frames} layers (with Background visible) to temporary PNG files in {tmp_dir_path}..."
+            )
+
+        crop_box: tuple[int, int, int, int] | None = None
         try:
-            # Ensure background layer is visible
+            # Ensure Background layer is visible for all frames
             if bg_id is not None:
                 try:
                     await client.command_run("layer.setProps", {"layer": bg_id, "visible": True})
                 except Exception:
                     pass
 
-            # Initial isolation: hide all frame layers
+            # Hide all animation frame layers initially
             for flayer in frame_layers:
                 fid = flayer.get("id")
                 if fid is not None:
@@ -615,8 +685,7 @@ async def export_document_movie(
                     except Exception:
                         pass
 
-            # Sequentially expose each frame and capture
-            crop_box: tuple[int, int, int, int] | None = None
+            # Sequentially expose each frame layer alongside Background and export to its own PNG
             prev_id: int | None = None
             for idx, flayer in enumerate(frame_layers, start=1):
                 cur_id = flayer.get("id")
@@ -625,6 +694,12 @@ async def export_document_movie(
                 if prev_id is not None and prev_id != cur_id:
                     try:
                         await client.command_run("layer.setProps", {"layer": prev_id, "visible": False})
+                    except Exception:
+                        pass
+
+                if bg_id is not None:
+                    try:
+                        await client.command_run("layer.setProps", {"layer": bg_id, "visible": True})
                     except Exception:
                         pass
 
@@ -641,50 +716,46 @@ async def export_document_movie(
                 raw_png = raw_frames_dir / f"frame_{idx:04d}.png"
                 proc_png = proc_frames_dir / f"frame_{idx:04d}.png"
 
-                # Capture frame render
-                captured = False
-                try:
-                    preview = await client.render_preview(max_side=1920)
-                    if isinstance(preview, bytes) and len(preview) > 0:
-                        raw_png.write_bytes(preview)
-                        captured = True
-                    elif isinstance(preview, str) and len(preview) > 0:
-                        try:
-                            raw_png.write_bytes(base64.b64decode(preview))
-                            captured = True
-                        except Exception:
-                            pass
-                except Exception as e:
-                    logger.debug("render_preview notice during movie capture: %s", e)
+                # Export pure canvas PNG (Background + current frame layer) to temporary file
+                exported_canvas = await _export_active_canvas_to_png(
+                    client,
+                    raw_png,
+                    canvas_width=doc_width,
+                    canvas_height=doc_height,
+                )
 
-                if not captured:
-                    # Fallback to capture_png
+                # Fallback for mocked test clients or headless preview
+                if not exported_canvas:
+                    captured = False
                     try:
-                        await client.capture_png(raw_png)
-                        if raw_png.exists() and raw_png.stat().st_size > 0:
+                        preview = await client.render_preview(max_side=1920)
+                        if isinstance(preview, bytes) and len(preview) > 0:
+                            raw_png.write_bytes(preview)
                             captured = True
+                        elif isinstance(preview, str) and len(preview) > 0:
+                            try:
+                                raw_png.write_bytes(base64.b64decode(preview))
+                                captured = True
+                            except Exception:
+                                pass
                     except Exception as e:
-                        logger.warning("capture_png fallback failed for frame %d: %s", idx, e)
+                        logger.debug("render_preview fallback notice: %s", e)
 
-                if not captured:
-                    # Synthetic minimal fallback (valid 2x2 white PNG)
-                    minimal_png = bytes.fromhex(
-                        "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001149444154789c63f8cfc0f01f8419600c0047ca07f967596eb70000000049454e44ae426082"
-                    )
-                    raw_png.write_bytes(minimal_png)
+                    if not captured:
+                        minimal_png = bytes.fromhex(
+                            "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d240000001149444154789c63f8cfc0f01f8419600c0047ca07f967596eb70000000049454e44ae426082"
+                        )
+                        raw_png.write_bytes(minimal_png)
 
-                # Detect canvas crop box on first frame if available
-                if crop_box is None and idx == 1:
-                    crop_box = detect_canvas_crop_box(raw_png)
-                    if crop_box and on_status:
-                        on_status(f"Cropping video to canvas bounds: {crop_box[2]}x{crop_box[3]} (excluding controls)...")
+                    if crop_box is None and idx == 1:
+                        crop_box = detect_canvas_crop_box(raw_png)
 
-                # Process through ImageMagick (magick)
-                process_frame_magick(raw_png, proc_png, crop_box=crop_box)
+                # Normalize temporary PNG frame onto solid white background via ImageMagick
+                process_frame_magick(raw_png, proc_png, crop_box=crop_box if not exported_canvas else None)
 
-            # 4. Encode MP4 video with FFmpeg
+            # Stitch all temporary PNG frames in order into the final MP4 via FFmpeg
             if on_status:
-                on_status(f"Encoding {total_frames} frames into MP4 movie via FFmpeg @ {fps_val:.1f} fps...")
+                on_status(f"Stitching {total_frames} temporary PNG frames into MP4 movie via FFmpeg @ {fps_val:.1f} fps...")
 
             input_pattern = str(proc_frames_dir / "frame_%04d.png")
             success, err_msg = encode_video_ffmpeg(input_pattern, final_output_path, fps=fps_val)
@@ -695,7 +766,7 @@ async def export_document_movie(
                 }
 
         finally:
-            # 5. Always restore ALL frame layers and background to visible
+            # Always restore ALL frame layers and Background to visible
             for flayer in frame_layers:
                 fid = flayer.get("id")
                 if fid is not None:

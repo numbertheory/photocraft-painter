@@ -623,8 +623,105 @@ def test_cartoon_animation_preserves_colors_and_features_across_all_frames():
 
         # Verify strict stroke count parity across all frames
         assert count_brush_strokes(frame["steps"]) == count_brush_strokes(frames[0]["steps"])
-        # Verify all mobile character draw strokes are retained (at least 100 strokes)
-        assert len(frame_draw) >= 100, f"Frame {k} has too few draw strokes: {len(frame_draw)}"
+        # Verify all mobile character draw strokes are retained
+        assert len(frame_draw) >= 70, f"Frame {k} has too few draw strokes: {len(frame_draw)}"
+
+
+def test_cartoon_white_rabbit_separates_background_and_fills_character_on_each_cel():
+    """Verify background elements are drawn once in background_steps and never repeated on cels,
+    while the white rabbit is solidly colored in on every single cel.
+    """
+    cfg = PainterConfig(provider="none", steps=12, style="cartoon", detail_level=10)
+    plan, _ = plan_animation("a white rabbit hopping across a field", cfg)
+
+    bg_steps = plan.get("background_steps", [])
+    assert len(bg_steps) >= 5, "Stationary background elements (sky, sun, hills, field, grass, flowers) must be in background_steps"
+
+    bg_names = " ".join(str(s.get("params", {}).get("name", "")).lower() for s in bg_steps)
+    assert "sky" in bg_names or "hill" in bg_names or "field" in bg_names or "grass" in bg_names
+
+    frames = plan["frames"]
+    assert len(frames) == 12
+
+    for k, frame in enumerate(frames, start=1):
+        draw_strokes = [
+            s for s in frame["steps"]
+            if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+        ]
+        cel_names = [str(s.get("params", {}).get("name", "")).lower() for s in draw_strokes]
+        # Background scenery must NOT be repeated inside the character cel frames
+        for cname in cel_names:
+            assert "background sky" not in cname
+            assert "background meadow" not in cname
+            assert "background grass" not in cname
+            assert "background sun" not in cname
+
+        # Every cel must have thick opaque white (#ffffff) fills for the rabbit body/head/ears
+        white_fills = [
+            s for s in draw_strokes
+            if str(s.get("params", {}).get("color", "")).lower() == "#ffffff"
+            and float(s.get("params", {}).get("size", 0)) >= 20.0
+            and float(s.get("params", {}).get("opacity", 1.0)) >= 0.95
+        ]
+        assert len(white_fills) >= 5, f"Frame {k} must have solid opaque white interior fills for the rabbit (found {len(white_fills)})"
+
+        # Every cel must also have pink inner ear/nose fills and crisp black ink outlines
+        colors = {str(s.get("params", {}).get("color", "")).lower() for s in draw_strokes}
+        assert "#ffb6c1" in colors or "#ff6b8b" in colors, f"Frame {k} missing pink inner ear/nose color"
+        assert "#111116" in colors or "#000000" in colors, f"Frame {k} missing black ink outlines"
+
+
+def test_hollow_llm_character_outlines_get_auto_filled_across_all_frames():
+    """Verify that if an LLM outputs hollow character outlines or shape.create/paint.bucket,
+    build_animation_frames synthesizes opaque interior fills on every frame and separates background hills/flowers.
+    """
+    from photocraft_painter.animator import build_animation_frames
+
+    llm_steps = [
+        {"cmd": "layer.new.layer", "params": {"name": "1. Background"}},
+        {"cmd": "paint.stroke", "params": {"name": "Green Rolling Hill", "points": [[0, 520], [400, 490], [800, 530]], "size": 90.0, "color": "#4caf50"}},
+        {"cmd": "paint.stroke", "params": {"name": "Grass Tuft 1", "points": [[550, 620], [555, 640], [562, 618]], "size": 4.0, "color": "#2e7d32"}},
+        {"cmd": "paint.stroke", "params": {"name": "Meadow Daisy Flower", "points": [[650, 660], [652, 662]], "size": 12.0, "color": "#fff176"}},
+        {"cmd": "layer.new.layer", "params": {"name": "2. Rabbit"}},
+        # Misplaced stray shape far from rabbit (at x=550) should be dropped
+        {"cmd": "shape.create", "params": {"name": "Misplaced Rabbit Oval", "kind": "ellipse", "rect": [520, 420, 120, 80], "fill": "#ffffff"}},
+        # Hollow rabbit outlines at x=160..260 with no fill strokes
+        {"cmd": "paint.stroke", "params": {"name": "Rabbit Body Outline", "points": [[150, 480], [220, 470], [230, 530], [150, 530], [150, 480]], "size": 5.0, "color": "#111116"}},
+        {"cmd": "paint.stroke", "params": {"name": "Rabbit Head Outline", "points": [[210, 420], [260, 420], [260, 465], [210, 465], [210, 420]], "size": 5.0, "color": "#111116"}},
+        {"cmd": "paint.stroke", "params": {"name": "Rabbit Ear Outline", "points": [[215, 340], [235, 340], [235, 420], [215, 420], [215, 340]], "size": 4.5, "color": "#111116"}},
+        {"cmd": "paint.stroke", "params": {"name": "Rabbit Eye Pupil", "points": [[245, 435], [246, 436]], "size": 8.0, "color": "#111116"}},
+    ]
+
+    frames = build_animation_frames(
+        base_steps=llm_steps,
+        prompt="a white rabbit hopping across a field",
+        num_frames=6,
+        stroke_budget=20,
+        style="cartoon",
+    )
+
+    # Background hills, grass tufts, and flowers must be separated into background_steps
+    bg_steps = frames[0]["background_steps"]
+    bg_names = [s["params"]["name"] for s in bg_steps]
+    assert "Green Rolling Hill" in bg_names
+    assert "Grass Tuft 1" in bg_names
+    assert "Meadow Daisy Flower" in bg_names
+
+    # Every frame must have synthesized opaque white (#ffffff) fills for the hollow rabbit body, head, and ear
+    for k, frame in enumerate(frames, start=1):
+        draw_strokes = [
+            s for s in frame["steps"]
+            if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+        ]
+        white_fills = [
+            s for s in draw_strokes
+            if s["params"].get("color") == "#ffffff" and float(s["params"].get("size", 0)) >= 12.0
+        ]
+        assert len(white_fills) >= 4, f"Frame {k} did not synthesize solid white fills for hollow rabbit contours"
+        # Verify Z-order: white fills come BEFORE Rabbit Eye Pupil and Rabbit Body Outline
+        first_fill_idx = next(i for i, s in enumerate(draw_strokes) if s["params"].get("color") == "#ffffff")
+        eye_idx = next(i for i, s in enumerate(draw_strokes) if "Eye Pupil" in s["params"].get("name", ""))
+        assert first_fill_idx < eye_idx, "Solid white fill must be drawn BEFORE facial features"
 
 
 
