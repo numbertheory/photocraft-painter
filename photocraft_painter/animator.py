@@ -49,6 +49,22 @@ def count_brush_strokes(steps: list[dict[str, Any]]) -> int:
     return count
 
 
+def is_essential_feature_stroke(stroke: dict[str, Any]) -> bool:
+    """Return True if stroke is a core drawing feature (body fill, face, eye, outline)."""
+    params = stroke.get("params", {})
+    name = str(params.get("name", "")).lower()
+    if any(k in name for k in ("accent", "inbetween", "micro", "stipple", "detail inbetweening", "speed accent")):
+        return False
+    essential_keywords = (
+        "fill", "paint", "color", "body", "fur", "skin", "belly", "inner",
+        "ear", "eye", "pupil", "iris", "nose", "mouth", "lip", "beak",
+        "face", "head", "whisker", "contour", "outline", "silhouette",
+    )
+    if any(k in name for k in essential_keywords):
+        return True
+    return False
+
+
 def enforce_stroke_parity(
     steps: list[dict[str, Any]],
     target_count: int,
@@ -59,7 +75,7 @@ def enforce_stroke_parity(
     """Enforce that the steps contain EXACTLY target_count paint.stroke commands.
 
     If deficient, subtle inbetween / accent brushstrokes are added.
-    If excessive, surplus non-essential strokes are trimmed.
+    If excessive, surplus non-essential strokes are trimmed while preserving core features.
     """
     current_count = count_brush_strokes(steps)
     if current_count == target_count:
@@ -68,18 +84,43 @@ def enforce_stroke_parity(
     result = list(steps)
 
     if current_count > target_count:
-        # Trim excess strokes from the end, prioritizing keeping erase and key draw strokes
-        new_steps: list[dict[str, Any]] = []
-        strokes_kept = 0
-        for s in result:
-            cmd = s.get("cmd") or s.get("id") or ""
-            if cmd == "paint.stroke":
-                if strokes_kept < target_count:
-                    new_steps.append(s)
-                    strokes_kept += 1
-            else:
-                new_steps.append(s)
-        return new_steps
+        excess = current_count - target_count
+        to_drop: set[int] = set()
+
+        # Phase 1: drop non-essential accent/inbetween strokes from the end
+        for idx in range(len(result) - 1, -1, -1):
+            s = result[idx]
+            if (s.get("cmd") or s.get("id")) == "paint.stroke":
+                if not is_essential_feature_stroke(s) and not s.get("params", {}).get("erase"):
+                    to_drop.add(idx)
+                    if len(to_drop) == excess:
+                        break
+
+        # Phase 2: if still excess, drop surplus erase strokes beyond the first 2
+        if len(to_drop) < excess:
+            erase_indices = [
+                idx for idx, s in enumerate(result)
+                if (s.get("cmd") or s.get("id")) == "paint.stroke" and s.get("params", {}).get("erase")
+            ]
+            if len(erase_indices) > 2:
+                for idx in reversed(erase_indices[2:]):
+                    if idx not in to_drop:
+                        to_drop.add(idx)
+                        if len(to_drop) == excess:
+                            break
+
+        # Phase 3: if still excess (rare), drop from any remaining strokes from the end
+        if len(to_drop) < excess:
+            for idx in range(len(result) - 1, -1, -1):
+                if idx in to_drop:
+                    continue
+                s = result[idx]
+                if (s.get("cmd") or s.get("id")) == "paint.stroke":
+                    to_drop.add(idx)
+                    if len(to_drop) == excess:
+                        break
+
+        return [s for idx, s in enumerate(result) if idx not in to_drop]
 
     # If current_count < target_count, add micro-refinement inbetween strokes
     needed = target_count - current_count
@@ -249,75 +290,40 @@ def create_erase_stroke_from(stroke: dict[str, Any], expand_size: float = 1.5) -
 
 def create_erase_strokes_covering(
     prev_mobile_strokes: list[dict[str, Any]],
-    max_erase_count: int = 8,
+    max_erase_count: int = 4,
 ) -> list[dict[str, Any]]:
-    """Create erase strokes that cleanly and completely clear the previous mobile subject."""
+    """Create erase strokes that cleanly clear the previous mobile subject along its actual paths.
+
+    Never uses giant 250px crater sweeps that wipe out background scenery or overlap with the
+    new subject position.
+    """
     if not prev_mobile_strokes:
         return []
 
-    min_x, min_y, max_x, max_y = get_strokes_bounds(prev_mobile_strokes)
-    cx = (min_x + max_x) / 2.0
-    cy = (min_y + max_y) / 2.0
-    w = max_x - min_x
-    h = max_y - min_y
-    r = max(w, h) / 2.0
-    brush_size = max(50.0, min(250.0, r * 1.4))
+    # Sort previous mobile strokes by brush size descending so we erase the largest masses first
+    sorted_strokes = sorted(
+        prev_mobile_strokes,
+        key=lambda s: float(s.get("params", {}).get("size") or 5.0),
+        reverse=True,
+    )
 
-    # Broad coverage eraser sweeps covering the bounding box
-    sweeps = [
-        # Horizontal sweep through center
-        {
-            "cmd": "paint.stroke",
-            "params": {
-                "name": "Erase: Previous Subject Area (Horizontal)",
-                "points": [[round(min_x - 10.0, 1), round(cy, 1), 1.0], [round(max_x + 10.0, 1), round(cy, 1), 1.0]],
-                "size": round(brush_size, 1),
-                "hardness": 1.0,
-                "opacity": 1.0,
-                "erase": True,
-            },
-        },
-        # Vertical sweep through center
-        {
-            "cmd": "paint.stroke",
-            "params": {
-                "name": "Erase: Previous Subject Area (Vertical)",
-                "points": [[round(cx, 1), round(min_y - 10.0, 1), 1.0], [round(cx, 1), round(max_y + 10.0, 1), 1.0]],
-                "size": round(brush_size, 1),
-                "hardness": 1.0,
-                "opacity": 1.0,
-                "erase": True,
-            },
-        },
-        # Diagonal 1
-        {
-            "cmd": "paint.stroke",
-            "params": {
-                "name": "Erase: Previous Subject Area (Diagonal 1)",
-                "points": [[round(min_x, 1), round(min_y, 1), 1.0], [round(max_x, 1), round(max_y, 1), 1.0]],
-                "size": round(brush_size, 1),
-                "hardness": 1.0,
-                "opacity": 1.0,
-                "erase": True,
-            },
-        },
-        # Diagonal 2
-        {
-            "cmd": "paint.stroke",
-            "params": {
-                "name": "Erase: Previous Subject Area (Diagonal 2)",
-                "points": [[round(min_x, 1), round(max_y, 1), 1.0], [round(max_x, 1), round(min_y, 1), 1.0]],
-                "size": round(brush_size, 1),
-                "hardness": 1.0,
-                "opacity": 1.0,
-                "erase": True,
-            },
-        },
-    ]
+    limit = max(2, min(max_erase_count, len(sorted_strokes)))
+    selected = sorted_strokes[:limit]
+    erases = []
+    for s in selected:
+        e = create_erase_stroke_from(s, expand_size=1.25)
+        cur_sz = float(e.get("params", {}).get("size", 10.0))
+        e["params"]["size"] = round(max(40.0, min(100.0, cur_sz)), 1)
+        erases.append(e)
 
-    individual_erases = [create_erase_stroke_from(s, expand_size=1.8) for s in prev_mobile_strokes]
-    combined = sweeps + individual_erases
-    return combined[:max(2, max_erase_count)]
+    # If only 1 stroke in mobile_strokes, add a second targeted stroke to satisfy parity/coverage
+    if len(erases) < 2 and sorted_strokes:
+        e2 = create_erase_stroke_from(sorted_strokes[0], expand_size=1.4)
+        cur_sz2 = float(e2.get("params", {}).get("size", 10.0))
+        e2["params"]["size"] = round(max(40.0, min(100.0, cur_sz2)), 1)
+        erases.append(e2)
+
+    return erases
 
 
 def build_animation_frames(
@@ -329,7 +335,16 @@ def build_animation_frames(
     height: int = 800,
 ) -> list[dict[str, Any]]:
     """Generate multi-frame animation layers with clean previous-frame erasure and physics-based motion."""
-    frame_1_steps = enforce_stroke_parity(base_steps, stroke_budget, width, height)
+    base_strokes = [s for s in base_steps if (s.get("cmd") or s.get("id")) == "paint.stroke"]
+    mobile_strokes, stationary_strokes = extract_mobile_feature_strokes(base_strokes, prompt)
+    if not mobile_strokes:
+        mobile_strokes = list(base_strokes)
+
+    num_mobile = len(mobile_strokes)
+    num_erase = min(4, max(2, num_mobile // 8)) if num_frames > 1 else 0
+    target_budget = max(stroke_budget, len(base_strokes), num_mobile + num_erase)
+
+    frame_1_steps = enforce_stroke_parity(base_steps, target_budget, width, height)
     frames: list[dict[str, Any]] = [
         {
             "frame_index": 1,
@@ -342,11 +357,6 @@ def build_animation_frames(
 
     if num_frames <= 1:
         return frames
-
-    base_strokes = [s for s in base_steps if (s.get("cmd") or s.get("id")) == "paint.stroke"]
-    mobile_strokes, stationary_strokes = extract_mobile_feature_strokes(base_strokes, prompt)
-    if not mobile_strokes:
-        mobile_strokes = list(base_strokes)
 
     min_x, min_y, max_x, max_y = get_strokes_bounds(mobile_strokes)
     cx = (min_x + max_x) / 2.0
@@ -470,9 +480,8 @@ def build_animation_frames(
             "params": {"name": f"Frame {k}"},
         })
 
-        # Step B: Erase previous frame's mobile positions completely
-        max_erase = max(4, min(12, stroke_budget // 3))
-        erase_strokes = create_erase_strokes_covering(prev_mobile, max_erase_count=max_erase)
+        # Step B: Erase previous frame's mobile positions cleanly
+        erase_strokes = create_erase_strokes_covering(prev_mobile, max_erase_count=num_erase)
 
         # Step C: Redraw elements at new displaced coordinates
         current_mobile: list[dict[str, Any]] = []
@@ -494,10 +503,10 @@ def build_animation_frames(
         frame_k_steps.extend(erase_strokes)
         frame_k_steps.extend(draw_strokes)
 
-        # Step D: Strictly balance strokes so stroke_count == stroke_budget!
+        # Step D: Strictly balance strokes so stroke_count == target_budget!
         frame_k_steps = enforce_stroke_parity(
             frame_k_steps,
-            target_count=stroke_budget,
+            target_count=target_budget,
             canvas_w=width,
             canvas_h=height,
         )
@@ -556,7 +565,7 @@ def plan_animation_fallback(
         "background": base_plan.get("background", "white"),
         "is_animation": True,
         "frames_count": num_frames,
-        "strokes_per_frame": stroke_budget,
+        "strokes_per_frame": frames[0]["stroke_count"] if frames else stroke_budget,
         "frames": frames,
         "steps": frames[0]["steps"],
     }
@@ -605,7 +614,7 @@ def plan_animation(
             "background": base_plan.get("background", "white"),
             "is_animation": True,
             "frames_count": num_frames,
-            "strokes_per_frame": stroke_budget,
+            "strokes_per_frame": frames[0]["stroke_count"] if frames else stroke_budget,
             "frames": frames,
         }
         return plan, f"{source}+animator"

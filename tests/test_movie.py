@@ -218,3 +218,85 @@ def test_process_frame_magick_with_crop():
         assert proc.exists()
         with Image.open(proc) as res:
             assert res.size == (200, 200)
+
+
+def test_detect_canvas_crop_box_resilient_to_dark_inking_lines():
+    """Verify detect_canvas_crop_box does not mistake cartoon black ink lines for pasteboard edge."""
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_img = Path(tmpdir) / "synthetic_cartoon_window.png"
+        im = Image.new("L", (1000, 800), color=40)
+        # Inner canvas from x=200..800, y=100..700 (width=601, height=601) with white 255
+        for x in range(200, 801):
+            for y in range(100, 701):
+                im.putpixel((x, y), 255)
+
+        # Draw vertical dark cartoon ink lines inside the canvas at x=696 and x=350
+        for y in range(100, 701):
+            for dx in range(6):
+                im.putpixel((696 + dx, y), 18)
+                im.putpixel((350 + dx, y), 18)
+
+        im.save(test_img)
+
+        box = detect_canvas_crop_box(test_img)
+        assert box is not None
+        x, y, w, h = box
+        # Must detect the full canvas width and not crop prematurely at x=350 or x=696
+        assert x == 200
+        assert y == 100
+        assert w == 601
+        assert h == 601
+
+
+def test_export_movie_from_psd_direct():
+    """Verify export_movie_from_psd extracts layers, composites over background, and encodes valid MP4."""
+    from photocraft_painter.movie import export_movie_from_psd
+
+    sample_psd = Path("/home/jp/Pictures/Cartoon Rabbit Hopping Ac [Cartoon][Detail 10][gemini-4-argon].psd")
+    if not sample_psd.exists():
+        pytest.skip("Sample PSD file not found on disk")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_mp4 = Path(tmpdir) / "rabbit_direct.mp4"
+        frames_seen = []
+
+        def on_prog(cur, tot, name):
+            frames_seen.append((cur, tot, name))
+
+        res = export_movie_from_psd(
+            psd_path=sample_psd,
+            output_mp4=out_mp4,
+            fps=5.0,
+            on_frame_progress=on_prog,
+        )
+
+        assert res["status"] == "ok"
+        assert res["frames_count"] == 24
+        assert res["fps"] == 5.0
+        assert out_mp4.exists()
+        assert out_mp4.stat().st_size > 0
+        assert len(frames_seen) == 24
+
+
+@pytest.mark.anyio
+async def test_export_document_movie_routes_to_psd_path():
+    """Verify export_document_movie directly handles PSD file paths without requiring active client."""
+    sample_psd = Path("/home/jp/Pictures/Cartoon Rabbit Hopping Ac [Cartoon][Detail 10][gemini-4-argon].psd")
+    if not sample_psd.exists():
+        pytest.skip("Sample PSD file not found on disk")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_mp4 = Path(tmpdir) / "rabbit_routed.mp4"
+        res = await export_document_movie(
+            client=None,
+            target_doc=str(sample_psd),
+            fps=5.0,
+            output_path=out_mp4,
+        )
+        assert res["status"] == "ok"
+        assert res["frames_count"] == 24
+        assert out_mp4.exists()
+        assert out_mp4.stat().st_size > 0
+

@@ -81,9 +81,9 @@ def get_movie_output_path(
 def detect_canvas_crop_box(image_path: Path | str) -> tuple[int, int, int, int] | None:
     """Detect the bounding box of the active document canvas inside the application window screenshot.
 
-    In PhotoCraft GUI screenshots, the canvas is situated in the central work area,
-    surrounded by the pasteboard (dark background) and application chrome (toolbar,
-    options bar, dock panels, status bar).
+    Uses column and row pasteboard density profiling across the central work area to ensure
+    inner subject details (such as dark cartoon inking outlines or high-contrast fills)
+    are never mistaken for the pasteboard boundaries of the canvas.
 
     Returns:
         (x, y, width, height) tuple in pixel coordinates, or None if detection fails or image is too small.
@@ -98,9 +98,8 @@ def detect_canvas_crop_box(image_path: Path | str) -> tuple[int, int, int, int] 
                 return None
 
             # Sample pasteboard in regions known to be pasteboard in PhotoCraft (outside canvas):
-            # Left pasteboard: x ~ 0.10 * w, y ~ 0.50 * h and 0.80 * h
-            sample_1 = gray.getpixel((int(w * 0.10), int(h * 0.50)))
-            sample_2 = gray.getpixel((int(w * 0.10), int(h * 0.80)))
+            sample_1 = gray.getpixel((int(w * 0.08), int(h * 0.50)))
+            sample_2 = gray.getpixel((int(w * 0.08), int(h * 0.80)))
             pb_color = (sample_1 + sample_2) // 2
 
             # Find candidates for canvas pixels in central region
@@ -110,59 +109,57 @@ def detect_canvas_crop_box(image_path: Path | str) -> tuple[int, int, int, int] 
             for y in range(int(h * 0.25), int(h * 0.75), y_step):
                 for x in range(int(w * 0.20), int(w * 0.75), x_step):
                     val = gray.getpixel((x, y))
-                    if abs(val - pb_color) > 25:
+                    if abs(val - pb_color) > 20:
                         candidates.append((x, y, val))
 
             if not candidates:
                 return None
 
-            # Seed point: median/mean of candidate coordinates
-            cx = sum(c[0] for c in candidates) // len(candidates)
-            cy = sum(c[1] for c in candidates) // len(candidates)
+            # Vertical sample range for column profiling: middle 50% of the window
+            y_min = int(h * 0.25)
+            y_max = int(h * 0.75)
+            y_samples = list(range(y_min, y_max, max(1, (y_max - y_min) // 40)))
+            num_y_samples = len(y_samples)
+            pb_thresh = 18
 
-            # Ensure (cx, cy) is a canvas pixel; if not, pick the candidate closest to (cx, cy)
-            if abs(gray.getpixel((cx, cy)) - pb_color) <= 20:
-                candidates.sort(key=lambda c: (c[0] - cx) ** 2 + (c[1] - cy) ** 2)
-                cx, cy = candidates[0][0], candidates[0][1]
+            col_is_canvas = []
+            for x in range(w):
+                # Count matches to pasteboard along this vertical slice
+                pb_matches = sum(1 for y in y_samples if abs(gray.getpixel((x, y)) - pb_color) <= pb_thresh)
+                # If less than 65% of the column matches pasteboard, it is part of canvas
+                col_is_canvas.append(pb_matches / num_y_samples < 0.65)
 
-            pb_thresh = max(15, min(35, abs(gray.getpixel((cx, cy)) - pb_color) // 3))
+            canvas_cols = [x for x, is_c in enumerate(col_is_canvas) if is_c]
+            if not canvas_cols:
+                return None
 
-            # Scan left from cx
-            left_x = 0
-            for x in range(cx, 0, -1):
-                if abs(gray.getpixel((x, cy)) - pb_color) <= pb_thresh:
-                    left_x = x + 1
-                    break
+            left_x = canvas_cols[0]
+            right_x = canvas_cols[-1]
 
-            # Scan right from cx
-            right_x = w - 1
-            for x in range(cx, w):
-                if abs(gray.getpixel((x, cy)) - pb_color) <= pb_thresh:
-                    right_x = x - 1
-                    break
+            # Horizontal sample range for row profiling: central 80% of detected canvas width
+            x_min = left_x + int((right_x - left_x) * 0.1)
+            x_max = right_x - int((right_x - left_x) * 0.1)
+            if x_max <= x_min:
+                x_min, x_max = left_x, right_x
+            x_samples = list(range(x_min, x_max + 1, max(1, (x_max - x_min) // 40)))
+            num_x_samples = len(x_samples)
 
-            mid_x = (left_x + right_x) // 2
+            row_is_canvas = []
+            for y in range(h):
+                pb_matches = sum(1 for x in x_samples if abs(gray.getpixel((x, y)) - pb_color) <= pb_thresh)
+                row_is_canvas.append(pb_matches / num_x_samples < 0.65)
 
-            # Scan up from cy
-            top_y = 0
-            for y in range(cy, 0, -1):
-                if abs(gray.getpixel((mid_x, y)) - pb_color) <= pb_thresh:
-                    top_y = y + 1
-                    break
+            canvas_rows = [y for y, is_c in enumerate(row_is_canvas) if is_c]
+            if not canvas_rows:
+                return None
 
-            # Scan down from cy
-            bottom_y = h - 1
-            for y in range(cy, h):
-                if abs(gray.getpixel((mid_x, y)) - pb_color) <= pb_thresh:
-                    bottom_y = y - 1
-                    break
+            top_y = canvas_rows[0]
+            bottom_y = canvas_rows[-1]
 
             cw = right_x - left_x + 1
             ch = bottom_y - top_y + 1
 
-            # Validate sanity of detected box:
-            # Must occupy a reasonable portion of the window (e.g. at least 15% width and height)
-            # and not be the entire window
+            # Validate sanity of detected box
             if cw >= int(w * 0.15) and ch >= int(h * 0.15) and (cw < w or ch < h):
                 return (left_x, top_y, cw, ch)
     except Exception as e:
@@ -255,19 +252,170 @@ def encode_video_ffmpeg(
         return False, f"FFmpeg subprocess error: {e}"
 
 
+def export_movie_from_psd(
+    psd_path: Path | str,
+    output_mp4: Path | str,
+    fps: float = 5.0,
+    on_frame_progress: Callable[[int, int, str], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Export all layers of a PSD file as an MP4 movie using ImageMagick and FFmpeg.
+
+    Composites each animation frame layer over the Background layer into temporary PNGs,
+    ensuring native resolution, full canvas coverage, and background visibility in each frame.
+    """
+    available, missing = check_movie_dependencies()
+    if not available:
+        return {
+            "status": "error",
+            "message": (
+                f"Required tools missing: {', '.join(missing)}. "
+                f"Both ffmpeg and ImageMagick ('magick') must be installed locally to export movies."
+            ),
+        }
+
+    psd = Path(psd_path).expanduser().resolve()
+    if not psd.exists() or not psd.is_file():
+        return {"status": "error", "message": f"PSD file not found: {psd}"}
+
+    out_mp4 = Path(output_mp4).expanduser().resolve()
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Query layers via ImageMagick
+    layer_lines: list[str] = []
+    try:
+        proc = subprocess.run(
+            ["magick", "identify", "-format", "%s: %[label]\n", str(psd)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        layer_lines = proc.stdout.splitlines()
+    except Exception:
+        pass
+
+    if not layer_lines or not any(":" in l for l in layer_lines):
+        try:
+            proc = subprocess.run(
+                ["magick", "identify", str(psd)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            layer_lines = proc.stdout.splitlines()
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to inspect PSD layers with ImageMagick: {e}"}
+
+    # Parse layer indices: ImageMagick assigns index 0 to merged composite, 1 to background, 2..N to layers
+    parsed_layers: list[tuple[int, str]] = []
+    for line in layer_lines:
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^(\d+):\s*(.*)$", line)
+        if m:
+            idx = int(m.group(1))
+            name = m.group(2).strip()
+            parsed_layers.append((idx, name))
+        elif f"{psd.name}[" in line or f"{psd.stem}[" in line:
+            m_alt = re.search(r"\[(\d+)\]", line)
+            if m_alt:
+                idx = int(m_alt.group(1))
+                parsed_layers.append((idx, f"Layer {idx}"))
+
+    if not parsed_layers:
+        return {"status": "error", "message": "Could not identify layers in PSD file."}
+
+    # Separate background and frame layers
+    bg_idx = 1 if len(parsed_layers) > 1 else 0
+    frame_layers: list[tuple[int, str]] = []
+    frame_numbered: list[tuple[int, int, str]] = []
+
+    for idx, name in parsed_layers:
+        if idx <= bg_idx:
+            continue
+        m_frame = re.match(r"^Frame\s*(\d+)$", name, re.IGNORECASE)
+        if m_frame:
+            frame_numbered.append((int(m_frame.group(1)), idx, name))
+        else:
+            frame_layers.append((idx, name))
+
+    if frame_numbered:
+        frame_numbered.sort(key=lambda x: x[0])
+        ordered_frames = [(item[1], item[2]) for item in frame_numbered]
+    else:
+        ordered_frames = frame_layers
+
+    if len(ordered_frames) < 2:
+        return {
+            "status": "error",
+            "message": f"Found only {len(ordered_frames)} frame layer(s) in PSD. Need at least 2 frames to generate a movie.",
+        }
+
+    total_frames = len(ordered_frames)
+    fps_val = max(0.1, min(120.0, float(fps)))
+
+    with tempfile.TemporaryDirectory(prefix="photocraft_psd_movie_") as tmpdir:
+        tmp_dir = Path(tmpdir)
+        proc_dir = tmp_dir / "proc"
+        proc_dir.mkdir(parents=True, exist_ok=True)
+
+        if on_status:
+            on_status(f"Extracting {total_frames} native layers from PSD over background...")
+
+        for k, (layer_idx, layer_name) in enumerate(ordered_frames, start=1):
+            if on_frame_progress:
+                on_frame_progress(k, total_frames, layer_name)
+
+            out_png = proc_dir / f"frame_{k:04d}.png"
+            # Composite background layer and frame layer
+            cmd = ["magick", f"{psd}[{bg_idx}]", f"{psd}[{layer_idx}]", "-flatten", str(out_png.resolve())]
+            try:
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            except Exception as e:
+                logger.warning("ImageMagick layer extract failed for frame %d (layer %d): %s", k, layer_idx, e)
+                try:
+                    subprocess.run(
+                        ["magick", f"{psd}[{layer_idx}]", "-background", "white", "-flatten", str(out_png.resolve())],
+                        check=True,
+                    )
+                except Exception:
+                    pass
+
+        if on_status:
+            on_status(f"Encoding {total_frames} frames into MP4 movie via FFmpeg @ {fps_val:.1f} fps...")
+
+        input_pattern = str(proc_dir / "frame_%04d.png")
+        success, err_msg = encode_video_ffmpeg(input_pattern, out_mp4, fps=fps_val)
+        if not success:
+            return {"status": "error", "message": f"Video encoding failed: {err_msg}"}
+
+    return {
+        "status": "ok",
+        "path": str(out_mp4.resolve()),
+        "doc_title": psd.stem,
+        "frames_count": total_frames,
+        "fps": fps_val,
+        "duration": round(float(total_frames) / fps_val, 2),
+        "size_bytes": out_mp4.stat().st_size if out_mp4.exists() else 0,
+    }
+
+
 async def export_document_movie(
-    client: PhotocraftMcpClient,
+    client: PhotocraftMcpClient | None = None,
     target_doc: str | int | None = None,
     fps: float = 5.0,
     output_path: Path | str | None = None,
     on_frame_progress: Callable[[int, int, str], None] | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Export all layers/frames of the open document in PhotoCraft as an MP4 movie.
+    """Export all layers/frames of an open document in PhotoCraft (or a PSD file) as an MP4 movie.
 
-    Sequentially isolates each frame layer over the background, captures canvas renders,
-    processes them with ImageMagick (`magick`), and encodes the MP4 movie using `ffmpeg`.
-    Post-export, all layers are restored to visible.
+    Directly extracts and composites native document layers with ImageMagick (`magick`)
+    over the background, and encodes the MP4 movie using `ffmpeg`.
+    If direct layer export is unavailable, falls back to canvas preview capture.
 
     Returns:
         dict containing "status", "path", "frames_count", "fps", "duration", "size_bytes",
@@ -284,7 +432,35 @@ async def export_document_movie(
             ),
         }
 
-    # 2. Activate designated document if requested
+    # 2. Check if target_doc is an existing PSD file on disk
+    if isinstance(target_doc, (str, Path)):
+        p = Path(target_doc).expanduser()
+        if p.exists() and p.is_file() and p.suffix.lower() == ".psd":
+            if output_path is not None:
+                final_output_path = Path(output_path).expanduser().resolve()
+                folder_warning = None
+            else:
+                final_output_path, folder_warning = get_movie_output_path(doc_title=p.stem)
+            if on_status and folder_warning:
+                on_status(folder_warning)
+            res = export_movie_from_psd(
+                psd_path=p,
+                output_mp4=final_output_path,
+                fps=fps,
+                on_frame_progress=on_frame_progress,
+                on_status=on_status,
+            )
+            if res.get("status") == "ok":
+                res["warning"] = folder_warning
+            return res
+
+    if client is None:
+        return {
+            "status": "error",
+            "message": "No PhotoCraft MCP client or input PSD file provided.",
+        }
+
+    # 3. Activate designated document if requested
     if target_doc is not None:
         if isinstance(target_doc, int):
             await client.command_run("document.activate", {"document": target_doc})
@@ -309,7 +485,7 @@ async def export_document_movie(
                             matched = True
                             break
 
-    # 3. Inspect document
+    # 4. Inspect document
     info = await client.doc_inspect() if hasattr(client, "doc_inspect") else await client.command_run("document.inspect", {})
     if not isinstance(info, dict) or "layers" not in info:
         return {"status": "error", "message": "No active document or layers found in PhotoCraft"}
@@ -322,36 +498,6 @@ async def export_document_movie(
             "message": f"Document has only {len(all_layers)} layer(s). At least 2 layers are needed to generate an animation movie.",
         }
 
-    bg_id = all_layers[-1].get("id")
-
-    # Separate frames: either Frame 1..N or top-to-bottom layers
-    frame_numbered: list[tuple[int, dict[str, Any]]] = []
-    other_layers: list[dict[str, Any]] = []
-
-    for l in all_layers:
-        if l.get("id") == bg_id:
-            continue
-        lname = str(l.get("name", "")).strip()
-        m = re.match(r"^Frame\s*(\d+)$", lname, re.IGNORECASE)
-        if m:
-            frame_numbered.append((int(m.group(1)), l))
-        else:
-            other_layers.append(l)
-
-    frame_layers: list[dict[str, Any]] = []
-    if frame_numbered:
-        frame_numbered.sort(key=lambda x: x[0])
-        frame_layers = [item[1] for item in frame_numbered]
-    else:
-        frame_layers = list(reversed(other_layers))
-
-    if len(frame_layers) < 2:
-        return {
-            "status": "error",
-            "message": f"Found only {len(frame_layers)} frame layer(s). Need at least 2 frames to generate a movie.",
-        }
-
-    total_frames = len(frame_layers)
     fps_val = max(0.1, min(120.0, float(fps)))
 
     # Determine destination file path
@@ -365,8 +511,88 @@ async def export_document_movie(
     if on_status and folder_warning:
         on_status(folder_warning)
 
+    # 5. Check if document already exists on disk as a saved PSD file
+    search_paths = [
+        Path.cwd() / f"{doc_title}.psd",
+        Path.cwd() / doc_title,
+        Path("~/Pictures").expanduser() / f"{doc_title}.psd",
+        Path("~/Pictures").expanduser() / doc_title,
+    ]
+    if info.get("path"):
+        search_paths.insert(0, Path(info["path"]))
+
+    for sp in search_paths:
+        if sp.exists() and sp.is_file() and sp.suffix.lower() == ".psd":
+            if on_status:
+                on_status(f"Found saved PSD '{sp.name}'. Exporting layers directly...")
+            res = export_movie_from_psd(
+                psd_path=sp,
+                output_mp4=final_output_path,
+                fps=fps_val,
+                on_frame_progress=on_frame_progress,
+                on_status=on_status,
+            )
+            if res.get("status") == "ok":
+                res["warning"] = folder_warning
+                return res
+
+    # 6. Attempt direct export by saving a temporary PSD copy via PhotoCraft
     with tempfile.TemporaryDirectory(prefix="photocraft_movie_") as tmpdir:
         tmp_dir_path = Path(tmpdir)
+        temp_psd = tmp_dir_path / f"export_{re.sub(r'[^a-zA-Z0-9_-]', '_', doc_title)}.psd"
+        saved_copy = False
+        try:
+            await client.command_run("file.saveACopy", {"path": str(temp_psd.resolve())})
+            if temp_psd.exists() and temp_psd.stat().st_size > 0:
+                saved_copy = True
+        except Exception as e:
+            logger.debug("Direct PSD save not supported or failed: %s", e)
+
+        if saved_copy:
+            if on_status:
+                on_status("Exported native PSD layers. Rendering movie frames directly from document...")
+            res = export_movie_from_psd(
+                temp_psd,
+                final_output_path,
+                fps=fps_val,
+                on_frame_progress=on_frame_progress,
+                on_status=on_status,
+            )
+            if res.get("status") == "ok":
+                res["warning"] = folder_warning
+                return res
+
+        # 7. Fallback: Sequential layer isolation and screen/canvas capture
+        bg_id = all_layers[-1].get("id")
+
+        # Separate frames: either Frame 1..N or top-to-bottom layers
+        frame_numbered: list[tuple[int, dict[str, Any]]] = []
+        other_layers: list[dict[str, Any]] = []
+
+        for l in all_layers:
+            if l.get("id") == bg_id:
+                continue
+            lname = str(l.get("name", "")).strip()
+            m = re.match(r"^Frame\s*(\d+)$", lname, re.IGNORECASE)
+            if m:
+                frame_numbered.append((int(m.group(1)), l))
+            else:
+                other_layers.append(l)
+
+        frame_layers: list[dict[str, Any]] = []
+        if frame_numbered:
+            frame_numbered.sort(key=lambda x: x[0])
+            frame_layers = [item[1] for item in frame_numbered]
+        else:
+            frame_layers = list(reversed(other_layers))
+
+        if len(frame_layers) < 2:
+            return {
+                "status": "error",
+                "message": f"Found only {len(frame_layers)} frame layer(s). Need at least 2 frames to generate a movie.",
+            }
+
+        total_frames = len(frame_layers)
         raw_frames_dir = tmp_dir_path / "raw"
         proc_frames_dir = tmp_dir_path / "proc"
         raw_frames_dir.mkdir(parents=True, exist_ok=True)

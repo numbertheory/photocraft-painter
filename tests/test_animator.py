@@ -594,4 +594,38 @@ def test_bouncing_ball_across_screen_trajectory():
         assert max_erase_size >= 40.0, f"Eraser brush size {max_erase_size} too small to clean previous position"
 
 
+def test_cartoon_animation_preserves_colors_and_features_across_all_frames():
+    """Regression test: Cartoon animations must retain internal body fills and colors across all 24 frames."""
+    cfg = PainterConfig(provider="none", steps=24, style="cartoon", detail_level=10)
+    plan, _ = plan_animation("a cartoon rabbit hopping across the screen", cfg)
+
+    assert plan["is_animation"] is True
+    frames = plan["frames"]
+    assert len(frames) == 24
+
+    # Collect colors drawn in Frame 1
+    f1_draw = [
+        s for s in frames[0]["steps"]
+        if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+    ]
+    f1_colors = {s["params"]["color"] for s in f1_draw if "color" in s.get("params", {})}
+    assert len(f1_colors) >= 3, "Frame 1 must contain distinct colors for outline, body, and accents"
+
+    # Verify every frame from 2 to 24 retains all colors drawn in Frame 1
+    for k, frame in enumerate(frames[1:], start=2):
+        frame_draw = [
+            s for s in frame["steps"]
+            if (s.get("cmd") or s.get("id")) == "paint.stroke" and not s.get("params", {}).get("erase")
+        ]
+        frame_colors = {s["params"]["color"] for s in frame_draw if "color" in s.get("params", {})}
+        missing = f1_colors - frame_colors
+        assert not missing, f"Frame {k} lost internal colors: {missing}"
+
+        # Verify strict stroke count parity across all frames
+        assert count_brush_strokes(frame["steps"]) == count_brush_strokes(frames[0]["steps"])
+        # Verify all mobile character draw strokes are retained (at least 100 strokes)
+        assert len(frame_draw) >= 100, f"Frame {k} has too few draw strokes: {len(frame_draw)}"
+
+
+
 
