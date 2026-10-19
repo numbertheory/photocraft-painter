@@ -140,8 +140,16 @@ def enforce_stroke_parity(
                 float(s.get("params", {}).get("size") or 0.0) >= 12.0
                 or any(k in str(s.get("params", {}).get("name") or "").lower() for k in ("fill", "solid", "core", "base", "wash"))
             )
-            and not any(k in str(s.get("params", {}).get("name") or "").lower() for k in ("shadow", "cast", "ink", "outline"))
+            and not any(k in str(s.get("params", {}).get("name") or "").lower() for k in ("shadow", "cast", "ink", "outline", "tail", "tooth", "teeth"))
         ]
+        if fill_candidates:
+            fill_candidates.sort(
+                key=lambda item: (
+                    1 if any(k in str(item[1].get("params", {}).get("name") or "").lower() for k in ("torso", "body", "core")) else 0,
+                    float(item[1].get("params", {}).get("size") or 0.0),
+                ),
+                reverse=True,
+            )
         chosen_idx, chosen_stroke = fill_candidates[0] if fill_candidates else existing_strokes[0]
         insert_pos = chosen_idx + 1
         c_params = chosen_stroke.get("params", {})
@@ -194,19 +202,32 @@ CHARACTER_KEYWORDS = (
     "rabbit", "bunny", "hare", "character", "subject", "hero", "animal",
     "creature", "person", "human", "figure", "body", "torso", "belly", "chest",
     "back", "rump", "haunch", "head", "face", "skull", "cheek", "jaw", "chin",
-    "snout", "muzzle", "nose", "nostril", "ear", "inner ear", "eye", "pupil",
-    "iris", "lid", "lash", "brow", "mouth", "lip", "smile", "tooth", "teeth",
-    "whisker", "leg", "thigh", "hind", "foreleg", "foot", "feet", "paw", "toe",
-    "hoof", "arm", "hand", "wing", "tail", "cotton", "pelage", "fur", "ball",
-    "sphere", "orb", "duck", "bill", "beak", "feather", "plumage", "cat", "dog",
-    "bear", "teddy", "kangaroo", "frog", "deer", "moose", "antler", "car",
-    "wheel", "tire", "windshield", "chassis", "butterfly", "cast shadow",
+    "upper jaw", "lower jaw", "mandible", "snout", "muzzle", "nose", "nostril",
+    "ear", "inner ear", "eye", "pupil", "iris", "lid", "lash", "brow", "mouth",
+    "lip", "smile", "tooth", "teeth", "fang", "whisker", "leg", "thigh", "hind",
+    "foreleg", "foot", "feet", "paw", "toe", "hoof", "arm", "hand", "shoulder",
+    "elbow", "wrist", "hip", "knee", "ankle", "claw", "talon", "wing", "tail",
+    "cotton", "pelage", "fur", "ball", "sphere", "orb", "duck", "bill", "beak",
+    "feather", "plumage", "cat", "dog", "bear", "teddy", "kangaroo", "frog",
+    "deer", "moose", "antler", "horn", "car", "wheel", "tire", "windshield",
+    "chassis", "butterfly", "cast shadow", "fish", "shark", "whale", "dolphin",
+    "minnow", "piranha", "goldfish", "salmon", "trout", "tuna", "octopus",
+    "squid", "tentacle", "turtle", "crab", "lobster", "fin", "dorsal",
+    "pectoral", "pelvic", "caudal", "fluke", "gill", "scale", "robot", "mech",
+    "droid", "antenna", "visor", "bird", "eagle", "owl", "hawk", "swan",
+    "dragon", "bat", "bee", "dinosaur", "trex", "raptor", "lion", "tiger",
+    "elephant", "monkey", "penguin", "horse", "mouse", "fox", "wolf", "bubble",
 )
 
 PART_KEYWORDS = (
-    "eye", "pupil", "lid", "blink", "mouth", "lip", "smile", "beak", "bill",
-    "wing", "arm", "hand", "wave", "splash", "ripple", "tail", "bob", "head",
-    "water splash", "bubble", "gleam", "highlight", "crest", "oscillation",
+    "eye", "pupil", "lid", "blink", "mouth", "lip", "smile", "jaw", "upper jaw",
+    "lower jaw", "mandible", "tooth", "teeth", "fang", "beak", "bill", "wing",
+    "left wing", "right wing", "arm", "left arm", "right arm", "hand", "claw",
+    "leg", "left leg", "right leg", "front leg", "hind leg", "back leg", "foot",
+    "paw", "thigh", "wave", "splash", "ripple", "tail", "tail fin", "caudal",
+    "fin", "dorsal", "pectoral", "flipper", "tentacle", "ear", "antenna",
+    "antler", "bob", "head", "water splash", "bubble", "gleam", "highlight",
+    "crest", "oscillation",
 )
 
 
@@ -530,15 +551,16 @@ def _stroke_cel_z_tier(stroke: dict[str, Any]) -> int:
 
     if any(k in name for k in (
         "eye", "pupil", "iris", "catchlight", "sparkle", "glint", "nose", "nostril",
-        "mouth", "smile", "lip", "whisker", "cheek blush", "rosy cheek", "brow", "eyebrow", "tooth",
-    )):
+        "mouth", "smile", "lip", "whisker", "cheek blush", "rosy cheek", "brow", "eyebrow",
+        "tooth", "teeth", "fang", "zigzag", "gill", "ray",
+    )) and "fill" not in name and "cavity" not in name:
         return 4
 
     is_dark_ink = col in ("#000000", "#111111", "#111116", "#181512", "#1a1a1a", "#1c2833", "#212121", "#2c3e50", "#374151")
     if any(k in name for k in ("ink", "outline", "contour", "perimeter", "boundary")) or (is_dark_ink and size <= 9.0):
         return 3
 
-    if any(k in name for k in ("inner ear", "pink", "cel shadow", "shade", "shading", "underside", "shadow")):
+    if any(k in name for k in ("inner ear", "pink", "cel shadow", "shade", "shading", "underside", "shadow", "cavity")):
         return 2
 
     if any(k in name for k in ("fill", "solid", "flat", "wash", "base", "core")):
@@ -582,71 +604,73 @@ def ensure_character_solid_fills(
     body_pts: list[list[float]] = []
     head_pts: list[list[float]] = []
 
-    for s in mobile_strokes:
-        p = s.get("params", {})
-        name = str(p.get("name") or "")
-        n_low = name.lower()
-        pts = p.get("points") or []
-        if len(pts) < 3:
-            continue
+    # Only synthesize fallback interior fills if the character does not already have dedicated solid fills
+    if len(existing_fills) < 3:
+        for s in mobile_strokes:
+            p = s.get("params", {})
+            name = str(p.get("name") or "")
+            n_low = name.lower()
+            pts = p.get("points") or []
+            if len(pts) < 3:
+                continue
 
-        # Skip facial features, whiskers, and cast shadows
-        if _stroke_cel_z_tier(s) in (0, 4):
-            continue
+            # Skip facial features, teeth, whiskers, and cast shadows
+            if _stroke_cel_z_tier(s) in (0, 4):
+                continue
 
-        bx0, by0, bx1, by1 = _stroke_bbox(s)
-        bw, bh = bx1 - bx0, by1 - by0
+            bx0, by0, bx1, by1 = _stroke_bbox(s)
+            bw, bh = bx1 - bx0, by1 - by0
 
-        if any(k in n_low for k in ("body", "torso", "belly", "back", "rump", "chest", "haunch")):
-            body_pts.extend(pts)
-        elif any(k in n_low for k in ("head", "cheek", "skull", "face", "jaw")):
-            head_pts.extend(pts)
+            if any(k in n_low for k in ("body", "torso", "belly", "back", "rump", "chest", "haunch")):
+                body_pts.extend(pts)
+            elif any(k in n_low for k in ("head", "cheek", "skull", "face")):
+                head_pts.extend(pts)
 
-        # If this stroke is a character contour/outline or hollow part loop with substantial area
-        is_part_contour = (
-            _stroke_cel_z_tier(s) == 3
-            or (
-                _stroke_cel_z_tier(s) not in (1, 2)
-                and any(k in n_low for k in ("ear", "tail", "leg", "thigh", "foot", "paw", "head", "body", "torso", "outline", "contour"))
-            )
-        )
-        if is_part_contour and bw >= 14.0 and bh >= 14.0:
-            cx, cy = (bx0 + bx1) * 0.5, (by0 + by1) * 0.5
-            # Check if an existing fill already covers (cx, cy)
-            covered = False
-            for ef in existing_fills:
-                ex0, ey0, ex1, ey1 = _stroke_bbox(ef)
-                esz = float(ef.get("params", {}).get("size") or 16.0) * 0.65
-                if (ex0 - esz) <= cx <= (ex1 + esz) and (ey0 - esz) <= cy <= (ey1 + esz):
-                    covered = True
-                    break
-            if not covered:
-                f_col = inner_ear_color if "inner ear" in n_low else base_color
-                synthesized_fills.extend(
-                    _synthesize_interior_fill_strokes_from_contour(pts, f_col, f"{name} Auto-Fill")
+            # If this stroke is a character contour/outline or hollow part loop with substantial area
+            is_part_contour = (
+                _stroke_cel_z_tier(s) == 3
+                or (
+                    _stroke_cel_z_tier(s) not in (1, 2)
+                    and any(k in n_low for k in ("ear", "tail", "leg", "thigh", "foot", "paw", "head", "body", "torso", "outline", "contour"))
                 )
-
-    # Also ensure the combined body region and head region have solid core fills if drawn with open arcs
-    for group_name, g_pts in (("Character Body", body_pts), ("Character Head", head_pts)):
-        if len(g_pts) >= 4:
-            gx0 = min(float(pt[0]) for pt in g_pts)
-            gx1 = max(float(pt[0]) for pt in g_pts)
-            gy0 = min(float(pt[1]) for pt in g_pts)
-            gy1 = max(float(pt[1]) for pt in g_pts)
-            gw, gh = gx1 - gx0, gy1 - gy0
-            gcx, gcy = (gx0 + gx1) * 0.5, (gy0 + gy1) * 0.5
-            if gw >= 24.0 and gh >= 24.0:
+            )
+            if is_part_contour and bw >= 14.0 and bh >= 14.0:
+                cx, cy = (bx0 + bx1) * 0.5, (by0 + by1) * 0.5
+                # Check if an existing fill already covers (cx, cy)
                 covered = False
-                for ef in existing_fills + synthesized_fills:
+                for ef in existing_fills:
                     ex0, ey0, ex1, ey1 = _stroke_bbox(ef)
-                    if ex0 <= gcx <= ex1 and ey0 <= gcy <= ey1 and float(ef.get("params", {}).get("size") or 0) >= 22.0:
+                    esz = float(ef.get("params", {}).get("size") or 16.0) * 0.65
+                    if (ex0 - esz) <= cx <= (ex1 + esz) and (ey0 - esz) <= cy <= (ey1 + esz):
                         covered = True
                         break
                 if not covered:
-                    oval = stroke_enclosed_oval(gcx, gcy, gw * 0.42, gh * 0.42)
+                    f_col = inner_ear_color if "inner ear" in n_low else base_color
                     synthesized_fills.extend(
-                        _synthesize_interior_fill_strokes_from_contour(oval, base_color, group_name)
+                        _synthesize_interior_fill_strokes_from_contour(pts, f_col, f"{name} Auto-Fill")
                     )
+
+        # Also ensure the combined body region and head region have solid core fills if drawn with open arcs
+        for group_name, g_pts in (("Character Body", body_pts), ("Character Head", head_pts)):
+            if len(g_pts) >= 4:
+                gx0 = min(float(pt[0]) for pt in g_pts)
+                gx1 = max(float(pt[0]) for pt in g_pts)
+                gy0 = min(float(pt[1]) for pt in g_pts)
+                gy1 = max(float(pt[1]) for pt in g_pts)
+                gw, gh = gx1 - gx0, gy1 - gy0
+                gcx, gcy = (gx0 + gx1) * 0.5, (gy0 + gy1) * 0.5
+                if gw >= 24.0 and gh >= 24.0:
+                    covered = False
+                    for ef in existing_fills + synthesized_fills:
+                        ex0, ey0, ex1, ey1 = _stroke_bbox(ef)
+                        if ex0 <= gcx <= ex1 and ey0 <= gcy <= ey1 and float(ef.get("params", {}).get("size") or 0) >= 22.0:
+                            covered = True
+                            break
+                    if not covered:
+                        oval = stroke_enclosed_oval(gcx, gcy, gw * 0.42, gh * 0.42)
+                        synthesized_fills.extend(
+                            _synthesize_interior_fill_strokes_from_contour(oval, base_color, group_name)
+                        )
 
     combined = synthesized_fills + list(mobile_strokes)
 
@@ -733,11 +757,19 @@ def split_background_and_character_steps(
         return stationary, mobile
 
     # 2. Spatial clustering check: find the bounding box of explicit character strokes
+    is_multi_subject = any(
+        kw in prompt_lower
+        for kw in (
+            "eat", "eating", "swallow", "bite", "biting", "chomp", "small fish",
+            "little fish", "minnow", "prey", "chase", "chasing", "two", "both",
+            "second", "friends", "fight", "catch", "catching",
+        )
+    )
     explicit_char = [
         s for s in char_candidates
         if any(ck in str(s.get("params", {}).get("name") or "").lower() for ck in CHARACTER_KEYWORDS)
     ]
-    if explicit_char:
+    if explicit_char and not is_multi_subject:
         cx0, cy0, cx1, cy1 = get_strokes_bounds(explicit_char)
         pad = 65.0
         final_char: list[dict[str, Any]] = []
@@ -757,7 +789,7 @@ def split_background_and_character_steps(
         if final_char:
             char_candidates = final_char
 
-    if not is_locomotion:
+    if not is_locomotion and not is_multi_subject:
         mobile, stationary = extract_mobile_feature_strokes(char_candidates, prompt)
         return bg_strokes + stationary, mobile
 
@@ -772,23 +804,600 @@ def apply_motion_transform(
     origin_y: float = 400.0,
     scale_x: float = 1.0,
     origin_x: float = 400.0,
+    angle_deg: float = 0.0,
+    pivot_x: float | None = None,
+    pivot_y: float | None = None,
 ) -> dict[str, Any]:
-    """Return a new stroke with transformed coordinates."""
+    """Return a new stroke with transformed coordinates (supports joint pivot rotation, scaling, and translation)."""
     transformed = copy.deepcopy(stroke)
     params = transformed.get("params", {})
     pts = params.get("points", [])
     new_pts: list[list[float]] = []
 
+    px = origin_x if pivot_x is None else pivot_x
+    py = origin_y if pivot_y is None else pivot_y
+    rad = math.radians(angle_deg)
+    cos_a = math.cos(rad)
+    sin_a = math.sin(rad)
+
     for p in pts:
         if isinstance(p, (list, tuple)) and len(p) >= 2:
-            x = (float(p[0]) - origin_x) * scale_x + origin_x + dx
-            y = (float(p[1]) - origin_y) * scale_y + origin_y + dy
+            rx = (float(p[0]) - px) * scale_x
+            ry = (float(p[1]) - py) * scale_y
+            if abs(angle_deg) > 1e-4:
+                tx = rx * cos_a - ry * sin_a
+                ty = rx * sin_a + ry * cos_a
+            else:
+                tx, ty = rx, ry
+            x = px + tx + dx
+            y = py + ty + dy
             pr = float(p[2]) if len(p) >= 3 else 0.8
             new_pts.append([round(x, 1), round(y, 1), round(pr, 2)])
 
     params["points"] = new_pts
     transformed["params"] = params
     return transformed
+
+
+def classify_stroke_part(
+    stroke: dict[str, Any],
+    actor_bounds: tuple[float, float, float, float],
+    prompt: str = "",
+) -> str:
+    """Classify a stroke within an actor into an anatomical appendage or body part role.
+
+    Roles:
+        'upper_jaw', 'lower_jaw', 'tail_fin', 'dorsal_fin', 'pectoral_fin', 'tail',
+        'left_wing', 'right_wing', 'left_leg', 'right_leg', 'left_arm', 'right_arm',
+        'ear', 'eye', 'head', 'shadow', 'torso'
+    """
+    params = stroke.get("params", {})
+    name = str(params.get("name") or "").lower()
+    p_low = prompt.lower()
+
+    ax0, ay0, ax1, ay1 = actor_bounds
+    aw = max(10.0, ax1 - ax0)
+    ah = max(10.0, ay1 - ay0)
+    actor_cx = (ax0 + ax1) * 0.5
+    actor_cy = (ay0 + ay1) * 0.5
+
+    sx0, sy0, sx1, sy1 = _stroke_bbox(stroke)
+    scx = (sx0 + sx1) * 0.5
+    scy = (sy0 + sy1) * 0.5
+    sw = sx1 - sx0
+    sh = sy1 - sy0
+    u = (scx - ax0) / aw  # 0.0 = left/rear, 1.0 = right/front
+    v = (scy - ay0) / ah  # 0.0 = top, 1.0 = bottom
+
+    if any(k in name for k in ("cast shadow", "ground shadow", "under feet", "contact shadow")):
+        return "shadow"
+
+    # 1. Eyes / Brow / Catchlights first (use 'eyelid'/'eyelash' so 'lid' never matches 'solid'!)
+    if any(k in name for k in ("eye", "pupil", "iris", "eyelid", "eyelash", "brow", "catchlight")):
+        return "eye"
+
+    # 2. Mouth cavity / throat interior stretches/compresses smoothly between jaws via vertex skinning
+    if any(k in name for k in ("mouth cavity", "throat", "gullet", "inside mouth", "tongue")):
+        return "torso"
+
+    # 3. Explicit Jaw / Mouth / Teeth classification
+    if any(k in name for k in ("upper jaw", "top jaw", "upper lip", "upper teeth", "top teeth", "snout top", "upper beak", "maxilla")):
+        return "upper_jaw"
+    if any(k in name for k in ("lower jaw", "bottom jaw", "mandible", "lower lip", "lower teeth", "bottom teeth", "chin", "lower beak")):
+        return "lower_jaw"
+    if any(k in name for k in ("mouth", "jaw", "teeth", "tooth", "fang", "bite", "chomp", "beak", "bill")):
+        return "upper_jaw" if scy < actor_cy else "lower_jaw"
+
+    # 4. Explicit Fins & Tail classification
+    if any(k in name for k in ("tail fin", "caudal", "fluke")):
+        return "tail_fin"
+    if "dorsal" in name or "top fin" in name or "back fin" in name or "spine fin" in name:
+        return "dorsal_fin"
+    if any(k in name for k in ("pectoral", "side fin", "pelvic fin", "ventral fin", "flipper")):
+        return "pectoral_fin"
+    if "fin" in name:
+        if u < 0.28:
+            return "tail_fin"
+        if v < 0.32:
+            return "dorsal_fin"
+        return "pectoral_fin"
+    if "tail" in name:
+        is_aquatic = any(k in p_low for k in ("fish", "shark", "whale", "dolphin", "minnow", "piranha", "swim"))
+        return "tail_fin" if is_aquatic else "tail"
+
+    # 5. Explicit Wings
+    if "left wing" in name or "front wing" in name:
+        return "left_wing"
+    if "right wing" in name or "back wing" in name or "rear wing" in name:
+        return "right_wing"
+    if "wing" in name:
+        return "left_wing" if scx < actor_cx else "right_wing"
+
+    # 6. Explicit Legs / Feet / Paws / Wheels
+    if any(k in name for k in ("left leg", "front leg", "foreleg", "left thigh", "left foot", "left paw", "front paw", "front wheel", "front tire")):
+        return "left_leg"
+    if any(k in name for k in ("right leg", "back leg", "hind leg", "rear leg", "right thigh", "right foot", "right paw", "hind paw", "rear wheel", "rear tire")):
+        return "right_leg"
+    if any(k in name for k in ("leg", "thigh", "foot", "feet", "paw", "hoof", "wheel", "tire", " ankle", "knee", "shin")):
+        return "left_leg" if scx < actor_cx else "right_leg"
+
+    # 7. Explicit Arms / Hands / Claws / Tentacles
+    if any(k in name for k in ("left arm", "front arm", "left hand", "left claw", "left shoulder")):
+        return "left_arm"
+    if any(k in name for k in ("right arm", "back arm", "rear arm", "right hand", "right claw", "right shoulder")):
+        return "right_arm"
+    if any(k in name for k in ("arm", "hand", "claw", "tentacle", "elbow", "wrist")):
+        return "left_arm" if scx < actor_cx else "right_arm"
+
+    # 8. Ears / Antennae / Horns / Head / Torso
+    if any(k in name for k in ("ear", "inner ear", "antenna", "antler", "horn", "crest")):
+        return "ear"
+    if any(k in name for k in ("head", "face", "skull", "cheek", "nose", "snout", "whisker")):
+        return "head"
+    if any(k in name for k in ("torso", "body", "belly", "chest", "rump", "haunch", "gill", "reinforcement", "core", "spine")):
+        return "torso"
+
+    # 9. Geometric fallback for untagged strokes (e.g. LLM pencil/sketch lines)
+    is_aquatic = any(k in p_low for k in ("fish", "shark", "whale", "dolphin", "minnow", "piranha", "swim"))
+    if is_aquatic:
+        if u < 0.25 and sw < aw * 0.45:
+            return "tail_fin"
+        if 0.22 <= u <= 0.72 and sy0 < ay0 + ah * 0.22 and sh < ah * 0.42:
+            return "dorsal_fin"
+        if 0.28 <= u <= 0.65 and scy > ay0 + ah * 0.54 and sw < aw * 0.38 and sh < ah * 0.42:
+            return "pectoral_fin"
+        if u > 0.62 and sw < aw * 0.55:
+            return "upper_jaw" if v < 0.52 else "lower_jaw"
+    else:
+        if v > 0.68 and sw < aw * 0.52 and sh < ah * 0.55:
+            return "left_leg" if scx < actor_cx else "right_leg"
+        if 0.30 <= v <= 0.66 and (u < 0.24 or u > 0.76) and sw < aw * 0.38:
+            return "left_arm" if scx < actor_cx else "right_arm"
+
+    return "torso"
+
+
+def _synthesize_small_fish_prey(
+    primary_bounds: tuple[float, float, float, float],
+    style: str = "cartoon",
+    width: int = 800,
+) -> list[dict[str, Any]]:
+    """Synthesize an articulated Small Fish ahead of the Big Fish if the initial plan omitted it."""
+    px0, py0, px1, py1 = primary_bounds
+    mouth_y = (py0 + py1) * 0.5
+    fish_cx = min(float(width - 140), max(530.0, px1 + 125.0))
+    fish_cy = mouth_y
+    ink_col = "#374151" if str(style).lower() == "pencil" else "#111116"
+    ink_sz = 2.4 if str(style).lower() == "pencil" else 4.0
+
+    prey_strokes: list[dict[str, Any]] = []
+    if str(style).lower() != "pencil":
+        prey_strokes.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Tail Fin Solid Fill",
+                "points": stroke_polygon(
+                    [(fish_cx - 36, fish_cy), (fish_cx - 66, fish_cy - 20), (fish_cx - 56, fish_cy), (fish_cx - 66, fish_cy + 20)],
+                    closed=True,
+                    steps_per_side=5,
+                ),
+                "size": 14.0,
+                "color": "#f77f00",
+                "hardness": 0.98,
+                "opacity": 1.0,
+                "erase": False,
+            },
+        })
+        prey_strokes.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Body Solid Fill",
+                "points": stroke_enclosed_oval(fish_cx, fish_cy, 36.0, 21.0),
+                "size": 26.0,
+                "color": "#ff9f1c",
+                "hardness": 0.98,
+                "opacity": 1.0,
+                "erase": False,
+            },
+        })
+
+    prey_strokes.extend([
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Tail Fin Outline",
+                "points": stroke_polygon(
+                    [(fish_cx - 36, fish_cy), (fish_cx - 68, fish_cy - 22), (fish_cx - 56, fish_cy), (fish_cx - 68, fish_cy + 22)],
+                    closed=True,
+                    steps_per_side=5,
+                ),
+                "size": ink_sz,
+                "color": ink_col,
+                "hardness": 0.95,
+                "opacity": 0.9,
+                "erase": False,
+            },
+        },
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Body Outline",
+                "points": stroke_enclosed_oval(fish_cx, fish_cy, 38.0, 22.0),
+                "size": ink_sz,
+                "color": ink_col,
+                "hardness": 0.95,
+                "opacity": 0.9,
+                "erase": False,
+            },
+        },
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Pectoral Fin Outline",
+                "points": [[fish_cx - 2, fish_cy + 5, 1.0], [fish_cx - 16, fish_cy + 18, 1.0], [fish_cx + 4, fish_cy + 15, 1.0]],
+                "size": max(1.8, ink_sz * 0.85),
+                "color": ink_col,
+                "hardness": 0.95,
+                "opacity": 0.9,
+                "erase": False,
+            },
+        },
+        {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Eye Pupil",
+                "points": [[fish_cx + 18, fish_cy - 5, 1.0], [fish_cx + 19, fish_cy - 5, 1.0]],
+                "size": max(4.0, ink_sz * 1.6),
+                "color": ink_col,
+                "hardness": 1.0,
+                "opacity": 1.0,
+                "erase": False,
+            },
+        },
+    ])
+    return prey_strokes
+
+
+def partition_actors(
+    mobile_strokes: list[dict[str, Any]],
+    prompt: str,
+    width: int = 800,
+    style: str = "cartoon",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Partition mobile strokes into (primary_strokes, secondary_strokes, effect_strokes).
+
+    Handles multi-actor scenarios such as 'a big fish eating a small fish', predator/prey chases,
+    and two interacting subjects.
+    """
+    p_low = prompt.lower()
+    is_eat_or_chase = any(
+        k in p_low
+        for k in (
+            "eat", "eating", "swallow", "swallowing", "bite", "biting", "chomp",
+            "devour", "small fish", "little fish", "minnow", "prey", "chase", "chasing",
+        )
+    )
+    is_multi = is_eat_or_chase or any(k in p_low for k in ("two", "both", "second", "balls"))
+
+    primary: list[dict[str, Any]] = []
+    secondary: list[dict[str, Any]] = []
+    effects: list[dict[str, Any]] = []
+
+    secondary_tokens = (
+        "small fish", "little fish", "tiny fish", "minnow", "prey",
+        "ball 2", "second ball", "right ball", "actor 2", "character 2", "mouse", "fly",
+    )
+    primary_tokens = (
+        "big fish", "large fish", "shark", "predator", "whale",
+        "ball 1", "first ball", "left ball", "actor 1", "character 1",
+    )
+    effect_tokens = ("bubble", "splash", "foam", "droplet", "sparkle ring")
+
+    untagged: list[dict[str, Any]] = []
+    for s in mobile_strokes:
+        sname = str(s.get("params", {}).get("name") or "").lower()
+        if any(tok in sname for tok in effect_tokens):
+            effects.append(s)
+        elif any(tok in sname for tok in secondary_tokens):
+            secondary.append(s)
+        elif any(tok in sname for tok in primary_tokens):
+            primary.append(s)
+        else:
+            untagged.append(s)
+
+    if primary or secondary:
+        # Assign remaining untagged strokes by proximity to primary vs secondary
+        if secondary and primary:
+            px0, py0, px1, py1 = get_strokes_bounds(primary)
+            sx0, sy0, sx1, sy1 = get_strokes_bounds(secondary)
+            pcx = (px0 + px1) * 0.5
+            scx = (sx0 + sx1) * 0.5
+            for u_s in untagged:
+                ux0, uy0, ux1, uy1 = _stroke_bbox(u_s)
+                ucx = (ux0 + ux1) * 0.5
+                if abs(ucx - scx) < abs(ucx - pcx) and (ux1 - ux0) < 220.0:
+                    secondary.append(u_s)
+                else:
+                    primary.append(u_s)
+        else:
+            primary.extend(untagged)
+    elif is_multi and len(untagged) >= 4:
+        # Spatial clustering fallback when LLM didn't label 'Big Fish' vs 'Small Fish'
+        all_x0, all_y0, all_x1, all_y1 = get_strokes_bounds(untagged)
+        span_w = max(1.0, all_x1 - all_x0)
+        # Split between left larger cluster (primary) and right compact cluster (secondary)
+        split_x = all_x0 + span_w * (0.64 if is_eat_or_chase else 0.50)
+        for u_s in untagged:
+            ux0, uy0, ux1, uy1 = _stroke_bbox(u_s)
+            ucx = (ux0 + ux1) * 0.5
+            ucy = (uy0 + uy1) * 0.5
+            uw = ux1 - ux0
+            uh = uy1 - uy0
+            if uw < 42.0 and uh < 42.0 and ucy < all_y0 + 130.0:
+                effects.append(u_s)
+            elif ucx >= split_x and uw < span_w * 0.42:
+                secondary.append(u_s)
+            else:
+                primary.append(u_s)
+        if not primary:
+            primary = list(secondary)
+            secondary = []
+    else:
+        primary = list(untagged)
+
+    # If the prompt is 'big fish eating a small fish' and the LLM omitted the small fish, synthesize one!
+    if is_eat_or_chase and any(k in p_low for k in ("fish", "shark", "whale", "piranha")) and len(secondary) < 2 and primary:
+        p_bounds = get_strokes_bounds(primary)
+        secondary.extend(_synthesize_small_fish_prey(p_bounds, style=style, width=width))
+
+    # Ensure primary (predator) and secondary (prey) have a clean initial chase gap in Frame 1
+    if is_eat_or_chase and primary and secondary:
+        px0, py0, px1, py1 = get_strokes_bounds(primary)
+        sx0, sy0, sx1, sy1 = get_strokes_bounds(secondary)
+        # If predator is too far right (px1 > 435), shift predator left so it has room to lunge across the screen
+        if px1 > 435.0:
+            shift_p = round(415.0 - px1, 1)
+            if px0 + shift_p < 35.0:
+                shift_p = round(35.0 - px0, 1)
+            primary = [apply_motion_transform(s, dx=shift_p, dy=0.0) for s in primary]
+            px0, py0, px1, py1 = get_strokes_bounds(primary)
+
+        # Ensure secondary (prey) starts at least 95px ahead of primary's jaws in Frame 1
+        scx = (sx0 + sx1) * 0.5
+        desired_min_scx = min(float(width - 135), px1 + 135.0)
+        if scx < desired_min_scx:
+            shift_s = round(desired_min_scx - scx, 1)
+            secondary = [apply_motion_transform(s, dx=shift_s, dy=0.0) for s in secondary]
+
+    return primary, secondary, effects
+
+
+def transform_actor_stroke_articulated(
+    stroke: dict[str, Any],
+    part: str,
+    actor_role: str,
+    actor_bounds: tuple[float, float, float, float],
+    t: float,
+    theta: float,
+    root_dx: float,
+    root_dy: float,
+    root_scale_x: float = 1.0,
+    root_scale_y: float = 1.0,
+    jaw_state: float = 0.0,
+    prompt: str = "",
+    part_bounds: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """Transform a stroke using hierarchical part joint pivots AND smooth continuous vertex skinning.
+
+    - `jaw_state` in [-1.0, +1.0]: > 0 opens upper/lower jaws around the jaw hinge; < 0 clamps jaws shut!
+    - Appendages (`tail_fin`, `pectoral_fin`, `dorsal_fin`, `left_leg`, `right_leg`, `left_arm`,
+      `right_arm`, `left_wing`, `right_wing`, `ear`, `head`) rotate independently around their joint pivots.
+    - Continuous vertex skinning bends multi-part outlines (e.g. spinal S-wave + jaw hinge + lower limb swing).
+    """
+    p_low = prompt.lower()
+    is_aquatic = any(k in p_low for k in ("fish", "shark", "whale", "dolphin", "minnow", "piranha", "swim"))
+    is_winged = any(k in p_low for k in ("bird", "eagle", "owl", "duck", "swan", "butterfly", "bee", "dragon", "bat", "fly", "wing"))
+    is_wave = any(k in p_low for k in ("wave", "waving", "greet", "cheer", "dance", "dancing"))
+
+    ax0, ay0, ax1, ay1 = actor_bounds
+    aw = max(12.0, ax1 - ax0)
+    ah = max(12.0, ay1 - ay0)
+    actor_cx = (ax0 + ax1) * 0.5
+    actor_cy = (ay0 + ay1) * 0.5
+
+    sx0, sy0, sx1, sy1 = part_bounds if part_bounds is not None else _stroke_bbox(stroke)
+    scx = (sx0 + sx1) * 0.5
+    scy = (sy0 + sy1) * 0.5
+    sw = max(4.0, sx1 - sx0)
+    sh = max(4.0, sy1 - sy0)
+
+    # Frequency of appendage cycles (small prey fish wags faster than big predator fish).
+    # Using theta plus a slight phase modulation guarantees full peak-to-trough swings at any frame count (e.g. 8, 12, 24).
+    cycles = 3.0 if actor_role == "secondary" else 2.0
+    phase = cycles * theta + 0.45 * math.sin(theta)
+
+    # Determine part-specific joint pivot (px, py) and local rotation/offset
+    pivot_x, pivot_y = scx, scy
+    part_angle = 0.0
+    part_dx, part_dy = 0.0, 0.0
+    part_sx, part_sy = 1.0, 1.0
+
+    jaw_hinge_x = ax0 + aw * 0.56
+    jaw_hinge_y = ay0 + ah * 0.52
+
+    if part == "tail_fin":
+        # Hinge at tail peduncle (right edge of tail fin for rightward-facing fish)
+        pivot_x = sx1
+        pivot_y = scy
+        wag_amp = 28.0 if actor_role == "secondary" else 22.0
+        part_angle = wag_amp * math.sin(phase)
+        part_dy = -6.0 * math.cos(phase)
+    elif part == "tail":
+        pivot_x = sx1 if scx < actor_cx else sx0
+        pivot_y = sy1 * 0.65 + sy0 * 0.35
+        part_angle = 20.0 * math.sin(phase)
+    elif part == "pectoral_fin":
+        pivot_x = sx0 + sw * 0.72
+        pivot_y = sy0 + sh * 0.28
+        part_angle = 22.0 * math.cos(phase)
+        part_dy = 3.0 * math.sin(phase)
+    elif part == "dorsal_fin":
+        pivot_x = scx
+        pivot_y = sy1
+        part_angle = -8.0 * math.sin(phase)
+    elif part == "upper_jaw":
+        pivot_x = jaw_hinge_x
+        pivot_y = jaw_hinge_y
+        if jaw_state >= 0.0:
+            part_angle = -20.0 * jaw_state
+            part_dy = -9.0 * jaw_state
+        else:
+            # Gentle downward hinge; midline clamping in vertex skinning prevents crossing lower jaw
+            part_angle = 8.0 * (-jaw_state)
+            part_dy = 4.0 * (-jaw_state)
+    elif part == "lower_jaw":
+        pivot_x = jaw_hinge_x
+        pivot_y = jaw_hinge_y
+        if jaw_state >= 0.0:
+            part_angle = 25.0 * jaw_state
+            part_dy = 12.0 * jaw_state
+        else:
+            # Gentle upward hinge; midline clamping in vertex skinning prevents crossing upper jaw
+            part_angle = -9.0 * (-jaw_state)
+            part_dy = -5.0 * (-jaw_state)
+    elif part == "left_leg":
+        # Hinge at hip joint (top of leg)
+        pivot_x = scx
+        pivot_y = sy0 + sh * 0.14
+        part_angle = 26.0 * math.sin(phase)
+        part_dy = -9.0 * max(0.0, math.cos(phase))
+    elif part == "right_leg":
+        # Hinge at hip joint in 180-degree opposite phase
+        pivot_x = scx
+        pivot_y = sy0 + sh * 0.14
+        part_angle = -26.0 * math.sin(phase)
+        part_dy = -9.0 * max(0.0, -math.cos(phase))
+    elif part == "left_arm":
+        # Hinge at shoulder joint
+        pivot_x = sx1 if scx < actor_cx else scx
+        pivot_y = sy0 + sh * 0.18
+        part_angle = (36.0 if is_wave else -22.0) * math.sin(phase)
+    elif part == "right_arm":
+        pivot_x = sx0 if scx >= actor_cx else scx
+        pivot_y = sy0 + sh * 0.18
+        part_angle = (36.0 if is_wave else 22.0) * math.sin(phase)
+    elif part in ("left_wing", "right_wing"):
+        pivot_x = actor_cx
+        pivot_y = sy1 * 0.7 + sy0 * 0.3
+        flap = math.sin(phase)
+        sign = 1.0 if part == "left_wing" else -1.0
+        part_angle = sign * 32.0 * flap
+        part_sy = 0.72 + 0.32 * math.cos(phase)
+    elif part == "ear":
+        pivot_x = scx
+        pivot_y = sy1
+        part_angle = -14.0 * math.cos(phase)
+    elif part == "head":
+        pivot_x = scx
+        pivot_y = sy1
+        part_angle = 5.0 * math.sin(phase)
+    elif part == "eye":
+        if is_aquatic:
+            part_dy = -6.0 * max(0.0, jaw_state) + 2.0 * min(0.0, -jaw_state)
+        elif 0.42 <= t <= 0.50:
+            part_sy = 0.25
+
+    transformed = copy.deepcopy(stroke)
+    params = transformed.get("params", {})
+    pts = params.get("points", [])
+    new_pts: list[list[float]] = []
+
+    rad = math.radians(part_angle)
+    cos_a = math.cos(rad)
+    sin_a = math.sin(rad)
+
+    for p in pts:
+        if not (isinstance(p, (list, tuple)) and len(p) >= 2):
+            continue
+        x0 = float(p[0])
+        y0 = float(p[1])
+        pr = float(p[2]) if len(p) >= 3 else 0.8
+
+        # 1. Apply part joint rotation & local scale around (pivot_x, pivot_y)
+        rx = (x0 - pivot_x) * part_sx
+        ry = (y0 - pivot_y) * part_sy
+        if abs(part_angle) > 1e-4:
+            x1 = pivot_x + (rx * cos_a - ry * sin_a) + part_dx
+            y1 = pivot_y + (rx * sin_a + ry * cos_a) + part_dy
+        else:
+            x1 = pivot_x + rx + part_dx
+            y1 = pivot_y + ry + part_dy
+
+        # 2. Apply continuous vertex-level skinning (so even untagged/continuous strokes articulate!)
+        u_pt = max(0.0, min(1.0, (x0 - ax0) / aw))
+        v_pt = max(0.0, min(1.0, (y0 - ay0) / ah))
+
+        if is_aquatic and part != "shadow":
+            # Travelling spinal S-wave strongest toward the tail (u_pt -> 0)
+            tail_flex = (1.0 - u_pt) ** 1.5
+            spine_wave = (9.0 if actor_role == "secondary" else 13.0) * tail_flex * math.sin(phase - 2.2 * u_pt)
+            y1 += spine_wave
+
+            # Continuous jaw hinge skinning in the mouth region (x0 > jaw_hinge_x)
+            if x0 > jaw_hinge_x and abs(jaw_state) > 0.01:
+                jw = min(1.0, (x0 - jaw_hinge_x) / max(20.0, ax1 - jaw_hinge_x))
+                if jaw_state >= 0.0 and part not in ("upper_jaw", "lower_jaw", "eye"):
+                    # Opening mouth wider away from jaw_hinge_y (including mouth cavity fill!)
+                    if y0 < jaw_hinge_y:
+                        y1 -= 18.0 * jaw_state * jw
+                    else:
+                        y1 += 22.0 * jaw_state * jw
+                elif jaw_state < 0.0 and part in ("upper_jaw", "lower_jaw", "torso"):
+                    # Clamping jaws & mouth cavity smoothly shut toward bite midline without crossing over!
+                    close_f = min(0.68, (-jaw_state) * 0.65 * (0.45 + 0.55 * jw))
+                    y1 = jaw_hinge_y + (y1 - jaw_hinge_y) * (1.0 - close_f)
+
+        elif not is_aquatic and not is_winged and part == "torso" and v_pt > 0.70:
+            # Continuous lower-body leg swing for single-contour characters
+            leg_w = min(1.0, (v_pt - 0.70) / 0.30)
+            side_sign = 1.0 if x0 < actor_cx else -1.0
+            x1 += side_sign * 14.0 * leg_w * math.sin(phase)
+            y1 -= 6.0 * leg_w * max(0.0, side_sign * math.cos(phase))
+
+        # 3. Apply actor root scaling around (actor_cx, actor_cy) and root translation (root_dx, root_dy)
+        fx = (x1 - actor_cx) * root_scale_x + actor_cx + root_dx
+        fy = (y1 - actor_cy) * root_scale_y + actor_cy + root_dy
+        new_pts.append([round(fx, 1), round(fy, 1), round(pr, 2)])
+
+    params["points"] = new_pts
+    params["erase"] = False
+    transformed["params"] = params
+    return transformed
+
+
+def _transform_swallowed_prey_to_bubble(
+    stroke: dict[str, Any],
+    idx: int,
+    mouth_x: float,
+    mouth_y: float,
+    post_bite_t: float,
+    style: str = "cartoon",
+) -> dict[str, Any]:
+    """Convert a swallowed prey stroke into a rising water bubble above the predator's mouth after the bite."""
+    bub = copy.deepcopy(stroke)
+    params = bub.get("params", {})
+    rise_y = max(95.0, mouth_y - 20.0 - post_bite_t * 145.0 - (idx % 4) * 24.0)
+    wobble_x = min(755.0, mouth_x - 12.0 + 16.0 * math.sin(post_bite_t * 8.0 + idx * 1.7) + (idx % 3 - 1) * 16.0)
+    radius = 7.0 + (idx % 3) * 3.5
+    params["name"] = f"Post-Bite Bubble {idx + 1}"
+    params["points"] = stroke_enclosed_oval(round(wobble_x, 1), round(rise_y, 1), radius, radius)
+    params["size"] = 2.4 if str(style).lower() == "pencil" else 3.2
+    params["color"] = "#64748b" if str(style).lower() == "pencil" else "#ffffff"
+    params["hardness"] = 0.95
+    params["opacity"] = 0.85 if str(style).lower() != "pencil" else 0.55
+    params["erase"] = False
+    bub["params"] = params
+    return bub
 
 
 def create_erase_stroke_from(stroke: dict[str, Any], expand_size: float = 1.5) -> dict[str, Any]:
@@ -859,42 +1468,57 @@ def build_animation_frames(
     height: int = 800,
     style: str = "cartoon",
 ) -> list[dict[str, Any]]:
-    """Generate multi-frame cel animation layers with stationary background separation and solid character fills."""
-    background_steps, mobile_strokes = split_background_and_character_steps(
+    """Generate multi-frame cel animation layers with articulated appendages, multi-actor choreography,
+    stationary background separation, and solid character fills.
+    """
+    background_steps, raw_mobile_strokes = split_background_and_character_steps(
         base_steps, prompt, width=width, height=height
     )
-    if not mobile_strokes:
+    if not raw_mobile_strokes:
         base_strokes = [s for s in base_steps if (s.get("cmd") or s.get("id")) == "paint.stroke"]
-        mobile_strokes, background_steps = extract_mobile_feature_strokes(base_strokes, prompt)
-        if not mobile_strokes:
-            mobile_strokes = list(base_strokes)
-
-    # Ensure the character is 100% colored in with solid opaque fills and proper Cel Z-Order on every frame
-    mobile_strokes = ensure_character_solid_fills(mobile_strokes, prompt, style=style)
+        raw_mobile_strokes, background_steps = extract_mobile_feature_strokes(base_strokes, prompt)
+        if not raw_mobile_strokes:
+            raw_mobile_strokes = list(base_strokes)
 
     prompt_lower = prompt.lower()
+    is_eat_interaction = any(
+        kw in prompt_lower
+        for kw in ("eat", "eating", "swallow", "swallowing", "bite", "biting", "chomp", "devour", "big fish", "small fish")
+    )
+    is_chase_interaction = any(kw in prompt_lower for kw in ("chase", "chasing", "pursue", "hunt", "catch", "catching"))
+    is_aquatic = any(kw in prompt_lower for kw in ("fish", "shark", "whale", "dolphin", "minnow", "piranha", "swim", "swimming"))
     is_across = any(
         kw in prompt_lower
         for kw in ("across", "screen", "cross", "traverse", "left to right", "through", "field", "meadow")
-    )
+    ) or is_eat_interaction or is_chase_interaction or is_aquatic
     is_bounce = any(kw in prompt_lower for kw in ("bounce", "bouncing", "ball", "hop", "hopping", "rebound", "rabbit", "bunny", "hare", "kangaroo", "frog"))
-    is_walk = any(kw in prompt_lower for kw in ("walk", "walking", "run", "running", "step", "stride"))
+    is_walk = any(kw in prompt_lower for kw in ("walk", "walking", "run", "running", "step", "stride", "robot", "bear", "teddy", "dinosaur", "person"))
     is_blink = any(kw in prompt_lower for kw in ("blink", "blinking", "eye", "wink"))
-    is_wave = any(kw in prompt_lower for kw in ("wave", "waving", "wing", "hand", "arm", "tail"))
-    is_animal_character = any(kw in prompt_lower for kw in ("rabbit", "bunny", "hare", "kangaroo", "frog", "cat", "dog", "bear", "teddy", "duck"))
+    is_wave = any(kw in prompt_lower for kw in ("wave", "waving", "wing", "hand", "arm", "tail", "fly", "flying", "bird", "butterfly"))
+    is_animal_character = any(kw in prompt_lower for kw in ("rabbit", "bunny", "hare", "kangaroo", "frog", "cat", "dog", "bear", "teddy", "duck", "fish", "shark", "bird"))
 
-    # If moving across the screen/field and the LLM placed the character near the center,
-    # position Frame 1 at the left starting side (cx ~ 170) so it hops cleanly across the entire field!
-    if num_frames > 1 and is_across and mobile_strokes:
-        m_x0, m_y0, m_x1, m_y1 = get_strokes_bounds(mobile_strokes)
+    # Partition into primary actor, secondary actor (e.g. small fish / prey / second ball), and effects (bubbles)
+    primary_strokes, secondary_strokes, effect_strokes = partition_actors(
+        raw_mobile_strokes, prompt, width=width, style=style
+    )
+
+    # Ensure each actor is 100% colored in with solid opaque fills on its own local bounds
+    primary_strokes = ensure_character_solid_fills(primary_strokes, prompt, style=style)
+    if secondary_strokes:
+        secondary_strokes = ensure_character_solid_fills(secondary_strokes, "orange small fish", style=style)
+
+    # Single-actor across-screen centering adjustment: start near left side (cx ~ 170)
+    if num_frames > 1 and is_across and not secondary_strokes and primary_strokes:
+        m_x0, m_y0, m_x1, m_y1 = get_strokes_bounds(primary_strokes)
         init_cx = (m_x0 + m_x1) * 0.5
         if 250.0 < init_cx < 550.0:
             shift_left = round(170.0 - init_cx, 1)
-            mobile_strokes = [
+            primary_strokes = [
                 apply_motion_transform(ms, dx=shift_left, dy=0.0)
-                for ms in mobile_strokes
+                for ms in primary_strokes
             ]
 
+    mobile_strokes = primary_strokes + secondary_strokes + effect_strokes
     num_mobile = len(mobile_strokes)
     num_erase = min(4, max(2, num_mobile // 8)) if num_frames > 1 else 0
     target_budget = max(stroke_budget, num_mobile + num_erase)
@@ -915,95 +1539,131 @@ def build_animation_frames(
     if num_frames <= 1:
         return frames
 
-    min_x, min_y, max_x, max_y = get_strokes_bounds(mobile_strokes)
+    p_bounds = get_strokes_bounds(primary_strokes)
+    min_x, min_y, max_x, max_y = p_bounds
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     bottom_y = max_y
 
-    # Determine across-screen horizontal travel distance
+    s_bounds = get_strokes_bounds(secondary_strokes) if secondary_strokes else p_bounds
+    s_cx = (s_bounds[0] + s_bounds[2]) * 0.5
+    s_cy = (s_bounds[1] + s_bounds[3]) * 0.5
+
+    # Pre-classify every stroke in primary and secondary into its anatomical appendage role
+    # and compute shared part_bounds so fills and outlines of the same appendage share one exact joint pivot!
+    primary_rig = [(s, classify_stroke_part(s, p_bounds, prompt)) for s in primary_strokes]
+    secondary_rig = [(s, classify_stroke_part(s, s_bounds, prompt)) for s in secondary_strokes]
+
+    primary_part_bounds: dict[str, tuple[float, float, float, float]] = {}
+    for role in {r for _, r in primary_rig}:
+        primary_part_bounds[role] = get_strokes_bounds([s for s, r in primary_rig if r == role])
+
+    secondary_part_bounds: dict[str, tuple[float, float, float, float]] = {}
+    for role in {r for _, r in secondary_rig}:
+        secondary_part_bounds[role] = get_strokes_bounds([s for s, r in secondary_rig if r == role])
+
+    # Determine across-screen horizontal travel distance for primary actor (keep front edge inside canvas!)
     max_travel = min(500.0, 44.0 * float(num_frames - 1))
     if cx < 400.0:
-        total_dx = min(max_travel, max(150.0, (float(width) - 120.0) - cx))
+        max_right_dx = max(140.0, (float(width) - 65.0) - max_x)
+        total_dx = min(max_travel, max_right_dx, max(150.0, (float(width) - 140.0) - cx))
     else:
-        total_dx = -min(max_travel, max(150.0, cx - 120.0))
+        total_dx = -min(max_travel, max(150.0, cx - 140.0))
 
     prev_mobile = copy.deepcopy(mobile_strokes)
 
     for k in range(2, num_frames + 1):
         t = float(k - 1) / float(num_frames - 1)
         theta = 2.0 * math.pi * float(k - 1) / float(num_frames)
+        jaw_state = 0.0
 
-        if is_bounce and is_across:
-            # Trajectory across screen with smooth bounce/hop arcs
+        if (is_eat_interaction or is_chase_interaction or is_aquatic) and secondary_strokes:
+            # Multi-actor Predator eating/chasing Prey choreography
+            # Predator accelerates during lunge (t=0.22..0.62), snaps jaws shut at t=0.62..0.76, then cruises
+            if t < 0.22:
+                lunge_p = 0.18 * (t / 0.22)
+                jaw_state = -0.25 + 0.55 * (t / 0.22)
+            elif t < 0.62:
+                u_lunge = (t - 0.22) / 0.40
+                lunge_p = 0.18 + 0.58 * (u_lunge ** 0.85)
+                # Jaws open wide to +1.0 during lunge (peaking around Frame 10-13)
+                jaw_state = 0.35 + 0.65 * math.sin(math.pi * min(1.0, u_lunge * 1.05))
+            elif t < 0.76:
+                # CHOMP! Jaws snap shut rapidly and hold clamped around the prey (Frames 16-18)
+                u_bite = (t - 0.62) / 0.14
+                lunge_p = 0.76 + 0.08 * u_bite
+                jaw_state = -0.95 if u_bite >= 0.35 else (0.35 - 3.7 * u_bite)
+            else:
+                # Satisfied swim-off & chewing
+                u_after = (t - 0.76) / 0.24
+                lunge_p = 0.84 + 0.16 * u_after
+                jaw_state = -0.55 + 0.30 * math.sin(2.0 * math.pi * 2.0 * u_after)
+
+            dx = round(lunge_p * total_dx, 1)
+            dy = -round(14.0 * math.sin(2.0 * math.pi * 1.5 * t), 1)
+            squash_x = 1.0 + 0.04 * math.sin(math.pi * t)
+            squash_y = 1.0
+
+        elif is_aquatic:
+            dx = round(t * total_dx, 1) if is_across else round(18.0 * math.sin(theta), 1)
+            dy = -round(16.0 * math.sin(2.0 * math.pi * 1.5 * t), 1)
+            squash_x = 1.0
+            squash_y = 1.0
+            jaw_state = 0.35 * math.sin(2.0 * math.pi * 2.0 * t)
+
+        elif is_bounce and is_across:
             dx = round(t * total_dx, 1)
             num_bounces = 2 if num_frames <= 12 else 3
             bounce_height = min(95.0 if is_animal_character else 120.0, max(55.0, bottom_y - 120.0))
             bounce_arc = abs(math.sin(math.pi * float(num_bounces) * t))
             dy = -round(bounce_height * bounce_arc, 1)
 
-            # Squash & stretch: subtle for animal characters, pronounced for rubber balls
             cycle = t * float(num_bounces)
             tau = cycle - math.floor(cycle)
             if tau < 0.12 or tau > 0.88:
                 squash_y = 0.88 if is_animal_character else 0.72
                 squash_x = 1.10 if is_animal_character else 1.25
-                orig_y = bottom_y
             elif 0.18 <= tau <= 0.35 or 0.65 <= tau <= 0.82:
                 squash_y = 1.08 if is_animal_character else 1.15
                 squash_x = 0.94 if is_animal_character else 0.90
-                orig_y = cy
             else:
                 squash_y = 1.0
                 squash_x = 1.0
-                orig_y = cy
-            orig_x = cx
 
         elif is_walk and is_across:
             dx = round(t * total_dx, 1)
             dy = -round(12.0 * abs(math.sin(math.pi * 6.0 * t)), 1)
-            squash_y = 1.0 + 0.04 * math.sin(math.pi * 6.0 * t)
+            squash_y = 1.0 + 0.03 * math.sin(math.pi * 6.0 * t)
             squash_x = 1.0
-            orig_x = cx
-            orig_y = bottom_y
 
         elif is_across:
             dx = round(t * total_dx, 1)
             dy = -round(15.0 * math.sin(2.0 * math.pi * 2.0 * t), 1)
             squash_y = 1.0
             squash_x = 1.0
-            orig_x = cx
-            orig_y = cy
 
         elif is_bounce and not is_across:
-            # Bouncing in place
             dx = 0.0
             tau = (1.0 - math.cos(theta)) / 2.0
             dy = -round(80.0 * tau, 1)
             if tau < 0.12:
                 squash_y = 0.86 if is_animal_character else 0.72
                 squash_x = 1.12 if is_animal_character else 1.25
-                orig_y = bottom_y
             else:
                 squash_y = 1.06 if is_animal_character else 1.10
                 squash_x = 0.96 if is_animal_character else 0.95
-                orig_y = cy
-            orig_x = cx
 
         elif is_walk and not is_across:
             dx = round(16.0 * math.sin(theta), 1)
             dy = -round(10.0 * abs(math.cos(theta)), 1)
-            squash_y = 1.0 + 0.05 * math.sin(2.0 * theta)
+            squash_y = 1.0 + 0.04 * math.sin(2.0 * theta)
             squash_x = 1.0
-            orig_x = cx
-            orig_y = bottom_y
 
         elif is_wave:
             dx = round(15.0 * math.sin(theta), 1)
-            dy = -round(8.0 * math.cos(theta), 1)
-            squash_y = 1.0 + 0.05 * math.sin(theta)
+            dy = -round(10.0 * math.cos(theta), 1)
+            squash_y = 1.0 + 0.04 * math.sin(theta)
             squash_x = 1.0
-            orig_x = cx
-            orig_y = cy
 
         elif is_blink:
             blink_amt = max(0.0, math.sin(theta))
@@ -1011,16 +1671,12 @@ def build_animation_frames(
             dy = round(2.0 * blink_amt, 1)
             squash_y = max(0.15, 1.0 - 0.85 * blink_amt)
             squash_x = 1.0
-            orig_x = cx
-            orig_y = cy
 
         else:
             dx = round(10.0 * math.sin(theta), 1)
             dy = -round(14.0 * math.sin(theta), 1)
-            squash_y = 1.0 + 0.05 * math.cos(theta)
+            squash_y = 1.0 + 0.04 * math.cos(theta)
             squash_x = 1.0
-            orig_x = cx
-            orig_y = cy
 
         frame_k_steps: list[dict[str, Any]] = []
 
@@ -1033,27 +1689,121 @@ def build_animation_frames(
         # Step B: Erase previous frame's mobile positions cleanly on the cel layer
         erase_strokes = create_erase_strokes_covering(prev_mobile, max_erase_count=num_erase)
 
-        # Step C: Redraw character elements at new displaced coordinates in strict Cel Z-Order
+        # Step C: Transform primary actor with independent appendage articulation
         current_mobile: list[dict[str, Any]] = []
         draw_strokes: list[dict[str, Any]] = []
-        for ms in mobile_strokes:
-            trans = apply_motion_transform(
-                ms,
-                dx=dx,
-                dy=dy,
-                scale_y=squash_y,
-                origin_y=orig_y,
-                scale_x=squash_x,
-                origin_x=orig_x,
+
+        for ms, part_role in primary_rig:
+            trans = transform_actor_stroke_articulated(
+                stroke=ms,
+                part=part_role,
+                actor_role="primary",
+                actor_bounds=p_bounds,
+                t=t,
+                theta=theta,
+                root_dx=dx,
+                root_dy=dy,
+                root_scale_x=squash_x,
+                root_scale_y=squash_y,
+                jaw_state=jaw_state,
+                prompt=prompt,
+                part_bounds=primary_part_bounds.get(part_role),
             )
-            trans.setdefault("params", {})["erase"] = False
             current_mobile.append(trans)
             draw_strokes.append(trans)
+
+        # Step D: Transform secondary actor (e.g. Small Fish being chased and eaten, or 2nd bouncing ball)
+        if secondary_rig:
+            predator_mouth_x = max_x + dx - 18.0
+            predator_mouth_y = cy + dy
+
+            if is_eat_interaction:
+                if t < 0.56:
+                    # Small fish swims ahead, darting forward with rapid tail-fin wagging
+                    s_dx = round(t * 115.0, 1)
+                    s_dy = -round(10.0 * math.sin(2.0 * math.pi * 3.0 * t), 1)
+                    s_scale = 1.0
+                    swallowed = False
+                elif t < 0.70:
+                    # Small fish gets pulled into the Big Fish's open jaws and shrinks as it enters the mouth!
+                    u_enter = (t - 0.56) / 0.14
+                    swim_x = s_cx + 0.56 * 115.0
+                    target_x = predator_mouth_x - 10.0
+                    cur_scx = swim_x * (1.0 - u_enter) + target_x * u_enter
+                    cur_scy = s_cy * (1.0 - u_enter) + predator_mouth_y * u_enter
+                    s_dx = round(cur_scx - s_cx, 1)
+                    s_dy = round(cur_scy - s_cy, 1)
+                    s_scale = max(0.32, round(1.0 - 0.65 * u_enter, 2))
+                    swallowed = False
+                else:
+                    # t >= 0.70: Small fish has been swallowed inside the snapped-shut jaws!
+                    swallowed = True
+                    s_dx, s_dy, s_scale = 0.0, 0.0, 1.0
+
+                for s_idx, (ms, part_role) in enumerate(secondary_rig):
+                    if not swallowed:
+                        trans = transform_actor_stroke_articulated(
+                            stroke=ms,
+                            part=part_role,
+                            actor_role="secondary",
+                            actor_bounds=s_bounds,
+                            t=t,
+                            theta=theta,
+                            root_dx=s_dx,
+                            root_dy=s_dy,
+                            root_scale_x=s_scale,
+                            root_scale_y=s_scale,
+                            jaw_state=0.0,
+                            prompt=prompt,
+                            part_bounds=secondary_part_bounds.get(part_role),
+                        )
+                    else:
+                        trans = _transform_swallowed_prey_to_bubble(
+                            stroke=ms,
+                            idx=s_idx,
+                            mouth_x=predator_mouth_x,
+                            mouth_y=predator_mouth_y - 35.0,
+                            post_bite_t=(t - 0.70) / 0.30,
+                            style=style,
+                        )
+                    current_mobile.append(trans)
+                    draw_strokes.append(trans)
+            else:
+                # Independent secondary actor motion (e.g. second ball or second character)
+                s_dx = round(-t * 140.0 if s_cx > 450.0 else t * 140.0, 1)
+                s_dy = -round(75.0 * abs(math.cos(math.pi * 2.5 * t)), 1) if is_bounce else -round(12.0 * math.cos(theta), 1)
+                for ms, part_role in secondary_rig:
+                    trans = transform_actor_stroke_articulated(
+                        stroke=ms,
+                        part=part_role,
+                        actor_role="secondary",
+                        actor_bounds=s_bounds,
+                        t=t,
+                        theta=theta + math.pi * 0.5,
+                        root_dx=s_dx,
+                        root_dy=s_dy,
+                        root_scale_x=1.0,
+                        root_scale_y=1.0,
+                        jaw_state=0.0,
+                        prompt=prompt,
+                        part_bounds=secondary_part_bounds.get(part_role),
+                    )
+                    current_mobile.append(trans)
+                    draw_strokes.append(trans)
+
+        # Step E: Animate ambient effect strokes (e.g. rising water bubbles)
+        for e_idx, es in enumerate(effect_strokes):
+            b_dx = round(dx * 0.45 + 10.0 * math.sin(theta + e_idx), 1)
+            b_dy = -round(t * 135.0 + (e_idx * 12.0), 1)
+            trans_e = apply_motion_transform(es, dx=b_dx, dy=b_dy)
+            trans_e.setdefault("params", {})["erase"] = False
+            current_mobile.append(trans_e)
+            draw_strokes.append(trans_e)
 
         frame_k_steps.extend(erase_strokes)
         frame_k_steps.extend(draw_strokes)
 
-        # Step D: Strictly balance strokes so stroke_count == target_budget!
+        # Step F: Strictly balance strokes so stroke_count == target_budget!
         frame_k_steps = enforce_stroke_parity(
             frame_k_steps,
             target_count=target_budget,

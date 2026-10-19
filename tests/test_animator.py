@@ -724,5 +724,92 @@ def test_hollow_llm_character_outlines_get_auto_filled_across_all_frames():
         assert first_fill_idx < eye_idx, "Solid white fill must be drawn BEFORE facial features"
 
 
+def test_big_fish_eating_small_fish_articulated_animation():
+    """Verify 'a big fish eating a small fish' animates independent jaws, fins, tail, and swallows the prey."""
+    cfg = PainterConfig(provider="none", steps=24, style="cartoon", detail_level=6)
+    plan, _ = plan_animation("a big fish eating a small fish", cfg)
+
+    assert plan["is_animation"] is True
+    frames = plan["frames"]
+    assert len(frames) == 24
+
+    # Stationary underwater background should be separated
+    bg_steps = plan.get("background_steps", [])
+    assert len(bg_steps) >= 4
+
+    def _part_mean_y(frame_steps: list[dict], part_substr: str) -> float:
+        pts = [
+            pt[1]
+            for s in frame_steps
+            if (s.get("cmd") or s.get("id")) == "paint.stroke"
+            and not s.get("params", {}).get("erase")
+            and part_substr.lower() in str(s.get("params", {}).get("name", "")).lower()
+            for pt in s.get("params", {}).get("points", [])
+        ]
+        assert pts, f"Missing strokes matching {part_substr!r}"
+        return sum(pts) / len(pts)
+
+    # Frame 1 (stalking), Frame 11 (lunge with jaws wide open), Frame 17 (bite snap shut)
+    f1_gap = _part_mean_y(frames[0]["steps"], "Big Fish: Lower Jaw") - _part_mean_y(frames[0]["steps"], "Big Fish: Upper Jaw")
+    f11_gap = _part_mean_y(frames[10]["steps"], "Big Fish: Lower Jaw") - _part_mean_y(frames[10]["steps"], "Big Fish: Upper Jaw")
+    f17_gap = _part_mean_y(frames[16]["steps"], "Big Fish: Lower Jaw") - _part_mean_y(frames[16]["steps"], "Big Fish: Upper Jaw")
+
+    assert f11_gap > f1_gap + 15.0, f"Jaws must hinge wide open during lunge (f1_gap={f1_gap:.1f}, f11_gap={f11_gap:.1f})"
+    assert f17_gap < f1_gap - 10.0, f"Jaws must clamp shut on bite (f1_gap={f1_gap:.1f}, f17_gap={f17_gap:.1f})"
+
+    # Verify independent tail-fin propulsion relative to torso across frames
+    tail_rel_y = [
+        _part_mean_y(f["steps"], "Big Fish: Tail Fin") - _part_mean_y(f["steps"], "Big Fish: Torso")
+        for f in frames[:12]
+    ]
+    assert max(tail_rel_y) - min(tail_rel_y) > 12.0, "Tail fin must oscillate independently relative to torso"
+
+    # Verify small fish is present before the bite and swallowed into rising bubbles after t >= 0.70
+    f1_names = " ".join(str(s.get("params", {}).get("name", "")) for s in frames[0]["steps"])
+    f22_names = " ".join(str(s.get("params", {}).get("name", "")) for s in frames[21]["steps"])
+    assert "Small Fish:" in f1_names
+    assert "Post-Bite Bubble" in f22_names
+
+    # Verify strict stroke count parity across all 24 frames
+    base_count = count_brush_strokes(frames[0]["steps"])
+    for f in frames[1:]:
+        assert count_brush_strokes(f["steps"]) == base_count
 
 
+def test_independent_limb_articulation_for_walking_character():
+    """Verify left and right legs and arms swing in opposing phases around joint pivots during a walk cycle."""
+    from photocraft_painter.animator import build_animation_frames
+
+    char_steps = [
+        {"cmd": "layer.new.layer", "params": {"name": "1. Background"}},
+        {"cmd": "paint.stroke", "params": {"name": "Background Ground Floor Line", "points": [[0, 680], [800, 680]], "size": 10.0, "color": "#444444"}},
+        {"cmd": "layer.new.layer", "params": {"name": "2. Character"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Head", "points": [[190, 320], [210, 320], [210, 360], [190, 360]], "size": 18.0, "color": "#ffccaa"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Torso", "points": [[185, 370], [215, 370], [215, 480], [185, 480]], "size": 24.0, "color": "#3366cc"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Left Arm", "points": [[190, 380], [185, 430], [180, 470]], "size": 12.0, "color": "#3366cc"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Right Arm", "points": [[210, 380], [215, 430], [220, 470]], "size": 12.0, "color": "#3366cc"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Left Leg", "points": [[192, 480], [190, 560], [188, 640]], "size": 14.0, "color": "#223366"}},
+        {"cmd": "paint.stroke", "params": {"name": "Character: Right Leg", "points": [[208, 480], [210, 560], [212, 640]], "size": 14.0, "color": "#223366"}},
+    ]
+
+    frames = build_animation_frames(
+        base_steps=char_steps,
+        prompt="a person walking across the screen",
+        num_frames=8,
+        stroke_budget=20,
+        style="sketchy",
+    )
+
+    def _foot_Minus_hip_x(frame_steps: list[dict], leg_name: str) -> float:
+        for s in frame_steps:
+            if s.get("params", {}).get("name") == leg_name:
+                pts = s["params"]["points"]
+                return float(pts[-1][0]) - float(pts[0][0])
+        raise AssertionError(f"{leg_name} not found")
+
+    left_swings = [_foot_Minus_hip_x(f["steps"], "Character: Left Leg") for f in frames]
+    right_swings = [_foot_Minus_hip_x(f["steps"], "Character: Right Leg") for f in frames]
+
+    # Left leg and right leg must swing independently in opposite directions during the stride
+    diffs = [abs(l_s - r_s) for l_s, r_s in zip(left_swings, right_swings)]
+    assert max(diffs) > 35.0, f"Left and right legs should swing independently in opposite phases (max diff={max(diffs):.1f})"

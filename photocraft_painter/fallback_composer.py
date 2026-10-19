@@ -5894,6 +5894,579 @@ def plan_painterly_rabbit(
     }
 
 
+def plan_painterly_fish_scene(
+    prompt: str,
+    width: int = 800,
+    height: int = 800,
+    detail_level: int = 5,
+    style: str = "cartoon",
+    model: str = "built-in",
+) -> dict[str, Any]:
+    """Generate an articulated fish scene (including 'big fish eating a small fish') with independent appendages.
+
+    Separates Layer 1 (Stationary Underwater Background) from articulated parts:
+    - Big Fish: Tail Fin, Dorsal Fin, Pectoral Fin, Torso, Upper Jaw (with teeth & eye), Lower Jaw (with teeth)
+    - Small Fish (when eating/chasing/two fish): Tail Fin, Body, Pectoral Fin, Eye
+    - Rising Water Bubbles
+    """
+    style_preset = get_style(style)
+    detail = max(1, min(detail_level, 25))
+    scale = min(width, height) / 800.0
+
+    def s(val: float) -> float:
+        return round(val * scale, 1)
+
+    steps: list[dict[str, Any]] = []
+    lowered = prompt.lower()
+    has_prey = any(
+        k in lowered
+        for k in ("eat", "eating", "swallow", "bite", "biting", "chomp", "small fish", "little fish", "minnow", "prey", "chase", "chasing", "two")
+    )
+
+    big_color = "#1f7a8c"
+    big_belly = "#bfdbf7"
+    big_fin_color = "#145369"
+    mouth_color = "#9b2226"
+    small_color = "#ff9f1c"
+    small_fin = "#f77f00"
+    ink_color = "#111116"
+    bg_color = "#caf0f8"
+    if style_preset.id in ("pencil", "sketchy"):
+        bg_color = "#ffffff"
+
+    # =========================================================================
+    # LAYER 1: STATIONARY UNDERWATER BACKGROUND (WATER WASH, SEABED, SEAWEED)
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "1. Background Underwater Scene"}})
+
+    if style_preset.id != "pencil":
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Upper Water Wash",
+                "points": stroke_line(s(30), s(110), s(770), s(110), steps=16),
+                "size": s(160.0),
+                "color": "#90e0ef",
+                "hardness": 0.85,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Mid Ocean Current Wash",
+                "points": stroke_line(s(30), s(340), s(770), s(340), steps=16),
+                "size": s(220.0),
+                "color": "#48cae4",
+                "hardness": 0.85,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Deep Water Wash",
+                "points": stroke_line(s(30), s(560), s(770), s(560), steps=16),
+                "size": s(180.0),
+                "color": "#0096c7",
+                "hardness": 0.88,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Sandy Ocean Floor",
+                "points": stroke_bezier((s(0), s(700)), (s(260), s(675)), (s(540), s(685)), (s(800), s(705)), steps=20),
+                "size": s(130.0),
+                "color": "#e9c46a",
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+    else:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Background Ocean Floor Horizon Line",
+                "points": stroke_bezier((s(30), s(665)), (s(260), s(650)), (s(540), s(660)), (s(770), s(670)), steps=20),
+                "size": s(2.5),
+                "color": "#64748b",
+                "hardness": 0.65,
+                "opacity": 0.55,
+            },
+        })
+
+    for kx, kh in ((110, 540), (690, 525)):
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Background Seaweed Kelp Frond at {kx}",
+                "points": stroke_bezier((s(kx), s(665)), (s(kx - 18), s(610)), (s(kx + 18), s(570)), (s(kx - 6), s(kh)), steps=14),
+                "size": s(10.0) if style_preset.id != "pencil" else s(2.2),
+                "color": "#2a9d8f" if style_preset.id != "pencil" else "#64748b",
+                "hardness": 0.9,
+                "opacity": 0.9 if style_preset.id != "pencil" else 0.55,
+            },
+        })
+
+    # =========================================================================
+    # LAYER 2: SOLID COLOR FILLS FOR ARTICULATED PARTS
+    # =========================================================================
+    if style_preset.id != "pencil":
+        steps.append({"cmd": "layer.new.layer", "params": {"name": "2. Character Solid Color Fills"}})
+        # Big Fish Tail Fin Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Tail Fin Solid Fill",
+                "points": stroke_polygon([(s(155), s(395)), (s(78), s(310)), (s(102), s(395)), (s(75), s(480))], closed=True, steps_per_side=6),
+                "size": s(26.0),
+                "color": big_fin_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Dorsal Fin Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Dorsal Fin Solid Fill",
+                "points": stroke_polygon([(s(205), s(295)), (s(245), s(232)), (s(300), s(292))], closed=True, steps_per_side=6),
+                "size": s(22.0),
+                "color": big_fin_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Torso Solid Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Torso Solid Fill",
+                "points": stroke_enclosed_oval(s(248), s(392), s(92), s(80)),
+                "size": s(54.0),
+                "color": big_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Torso Core Solid Fill",
+                "points": stroke_line(s(175), s(392), s(320), s(392), steps=10),
+                "size": s(68.0),
+                "color": big_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Belly Solid Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Belly Solid Fill",
+                "points": stroke_bezier((s(175), s(435)), (s(235), s(475)), (s(295), s(475)), (s(340), s(440)), steps=12),
+                "size": s(34.0),
+                "color": big_belly,
+                "hardness": 0.95,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Mouth Cavity Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Mouth Cavity Fill",
+                "points": stroke_polygon([(s(318), s(395)), (s(398), s(350)), (s(375), s(395)), (s(396), s(442))], closed=True, steps_per_side=5),
+                "size": s(26.0),
+                "color": mouth_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Upper Jaw Solid Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Upper Jaw Solid Fill",
+                "points": stroke_bezier((s(300), s(325)), (s(345), s(310)), (s(390), s(325)), (s(422), s(352)), steps=12),
+                "size": s(42.0),
+                "color": big_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Lower Jaw Solid Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Lower Jaw Solid Fill",
+                "points": stroke_bezier((s(305), s(445)), (s(350), s(465)), (s(388), s(460)), (s(416), s(438)), steps=12),
+                "size": s(34.0),
+                "color": big_belly,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+        # Big Fish Pectoral Fin Solid Fill
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Pectoral Fin Solid Fill",
+                "points": stroke_polygon([(s(265), s(420)), (s(220), s(455)), (s(255), s(478))], closed=True, steps_per_side=5),
+                "size": s(20.0),
+                "color": big_fin_color,
+                "hardness": 0.98,
+                "opacity": 1.0,
+            },
+        })
+
+        if has_prey:
+            # Small Fish Tail Fin Fill
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Small Fish: Tail Fin Solid Fill",
+                    "points": stroke_polygon([(s(538), s(396)), (s(502), s(374)), (s(512), s(396)), (s(502), s(418))], closed=True, steps_per_side=5),
+                    "size": s(14.0),
+                    "color": small_fin,
+                    "hardness": 0.98,
+                    "opacity": 1.0,
+                },
+            })
+            # Small Fish Body Solid Fill
+            steps.append({
+                "cmd": "paint.stroke",
+                "params": {
+                    "name": "Small Fish: Body Solid Fill",
+                    "points": stroke_enclosed_oval(s(578), s(396), s(38), s(22)),
+                    "size": s(28.0),
+                    "color": small_color,
+                    "hardness": 0.98,
+                    "opacity": 1.0,
+                },
+            })
+
+    # =========================================================================
+    # LAYER 3: ARTICULATED APPENDAGES, JAWS, TEETH & OUTLINES
+    # =========================================================================
+    steps.append({"cmd": "layer.new.layer", "params": {"name": "3. Articulated Appendages & Outlines"}})
+
+    # 1. Big Fish Tail Fin Outline & Rays
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Tail Fin Outline",
+            "points": stroke_polygon([(s(155), s(380)), (s(72), s(302)), (s(104), s(395)), (s(70), s(486)), (s(155), s(412))], closed=True, steps_per_side=8),
+            "size": s(5.0),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Tail Fin Upper Ray",
+            "points": stroke_line(s(145), s(390), s(88), s(332), steps=8),
+            "size": s(3.0),
+            "color": ink_color,
+            "hardness": 0.95,
+            "opacity": 0.9,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Tail Fin Lower Ray",
+            "points": stroke_line(s(145), s(402), s(86), s(458), steps=8),
+            "size": s(3.0),
+            "color": ink_color,
+            "hardness": 0.95,
+            "opacity": 0.9,
+        },
+    })
+
+    # 2. Big Fish Dorsal Fin Outline
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Dorsal Fin Outline",
+            "points": [
+                [s(195), s(298), 1.0],
+                [s(222), s(238), 1.0],
+                [s(245), s(272), 1.0],
+                [s(268), s(228), 1.0],
+                [s(288), s(268), 1.0],
+                [s(308), s(242), 1.0],
+                [s(322), s(292), 1.0],
+            ],
+            "size": s(4.8),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 3. Big Fish Torso Back & Belly Outlines
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Torso Upper Back Outline",
+            "points": stroke_bezier((s(150), s(380)), (s(195), s(292)), (s(275), s(280)), (s(330), s(295)), steps=16),
+            "size": s(5.2),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Torso Lower Belly Outline",
+            "points": stroke_bezier((s(150), s(412)), (s(200), s(488)), (s(275), s(492)), (s(328), s(468)), steps=16),
+            "size": s(5.2),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Gill Slit Arc",
+            "points": stroke_bezier((s(302), s(335)), (s(290), s(375)), (s(292), s(415)), (s(305), s(442)), steps=10),
+            "size": s(4.0),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 4. Big Fish Pectoral Fin Outline (Paddle Appendage)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Pectoral Fin Outline",
+            "points": stroke_polygon([(s(272), s(416)), (s(212), s(456)), (s(252), s(486)), (s(280), s(435))], closed=True, steps_per_side=6),
+            "size": s(4.5),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 5. Big Fish Upper Jaw, Snout & Upper Teeth (Hinged Upper Jaw Appendage)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Upper Jaw Outline",
+            "points": [
+                [s(325), s(295), 1.0],
+                [s(385), s(305), 1.0],
+                [s(432), s(338), 1.0],
+                [s(415), s(362), 1.0],
+                [s(332), s(392), 1.0],
+            ],
+            "size": s(5.2),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Upper Teeth Zigzag",
+            "points": [
+                [s(342), s(386), 1.0],
+                [s(354), s(402), 1.0],
+                [s(366), s(380), 1.0],
+                [s(378), s(398), 1.0],
+                [s(390), s(372), 1.0],
+                [s(404), s(390), 1.0],
+                [s(416), s(362), 1.0],
+            ],
+            "size": s(3.8),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 6. Big Fish Lower Jaw & Lower Teeth (Hinged Lower Jaw Appendage)
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Lower Jaw Outline",
+            "points": [
+                [s(332), s(392), 1.0],
+                [s(412), s(432), 1.0],
+                [s(426), s(452), 1.0],
+                [s(382), s(478), 1.0],
+                [s(325), s(468), 1.0],
+            ],
+            "size": s(5.2),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Lower Teeth Zigzag",
+            "points": [
+                [s(345), s(404), 1.0],
+                [s(356), s(390), 1.0],
+                [s(368), s(414), 1.0],
+                [s(380), s(398), 1.0],
+                [s(392), s(424), 1.0],
+                [s(404), s(408), 1.0],
+                [s(414), s(432), 1.0],
+            ],
+            "size": s(3.8),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 7. Big Fish Eye & Fierce Brow (Attached to Upper Jaw / Head)
+    if style_preset.id != "pencil":
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Big Fish: Upper Jaw Eye Sclera Fill",
+                "points": [[s(358), s(330), 1.0], [s(360), s(330), 1.0]],
+                "size": s(24.0),
+                "color": "#ffffff",
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Upper Jaw Eye Outline",
+            "points": stroke_enclosed_oval(s(358), s(330), s(13), s(12)),
+            "size": s(3.8),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Upper Jaw Eye Pupil",
+            "points": [[s(362), s(331), 1.0], [s(363), s(331), 1.0]],
+            "size": s(9.0),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+    steps.append({
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Big Fish: Upper Jaw Brow Ridge",
+            "points": stroke_line(s(344), s(314), s(374), s(322), steps=6),
+            "size": s(4.2),
+            "color": ink_color,
+            "hardness": 1.0,
+            "opacity": 1.0,
+        },
+    })
+
+    # 8. Small Fish (Independent Prey Actor with Tail Fin, Body, Pectoral Fin & Eye)
+    if has_prey:
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Tail Fin Outline",
+                "points": stroke_polygon([(s(538), s(396)), (s(498), s(370)), (s(512), s(396)), (s(498), s(422))], closed=True, steps_per_side=6),
+                "size": s(4.0),
+                "color": ink_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Body Outline",
+                "points": stroke_enclosed_oval(s(578), s(396), s(40), s(24)),
+                "size": s(4.4),
+                "color": ink_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Dorsal Fin Outline",
+                "points": [[s(562), s(373), 1.0], [s(576), s(356), 1.0], [s(590), s(374), 1.0]],
+                "size": s(3.6),
+                "color": ink_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Pectoral Fin Outline",
+                "points": [[s(576), s(402), 1.0], [s(558), s(416), 1.0], [s(582), s(414), 1.0]],
+                "size": s(3.4),
+                "color": ink_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": "Small Fish: Eye Pupil",
+                "points": [[s(598), s(390), 1.0], [s(599), s(390), 1.0]],
+                "size": s(7.0),
+                "color": ink_color,
+                "hardness": 1.0,
+                "opacity": 1.0,
+            },
+        })
+
+    # 9. Rising Water Bubbles
+    for bx, by, br, idx in ((445, 285, 10, 1), (468, 240, 13, 2), (595, 330, 8, 3)):
+        steps.append({
+            "cmd": "paint.stroke",
+            "params": {
+                "name": f"Bubble: Water Bubble {idx}",
+                "points": stroke_enclosed_oval(s(bx), s(by), s(br), s(br)),
+                "size": s(2.8),
+                "color": "#ffffff" if style_preset.id != "pencil" else ink_color,
+                "hardness": 0.95,
+                "opacity": 0.85,
+            },
+        })
+
+    scene_label = "Big Fish Eating Small Fish" if has_prey else "Swimming Fish"
+    title = format_document_title(scene_label, style=style, detail_level=detail, model=model)
+    return {
+        "title": title,
+        "width": width,
+        "height": height,
+        "background": bg_color,
+        "detail_level": detail,
+        "style": style_preset.id,
+        "model": model.strip().replace(":", "-").replace("/", "-"),
+        "steps": steps,
+    }
+
+
 def plan_fallback(
     prompt: str,
     width: int = 800,
@@ -5925,6 +6498,9 @@ def plan_fallback(
 
     if any(k in lowered for k in ["rabbit", "bunny", "hare"]):
         return plan_painterly_rabbit(prompt, width, height, detail_level, style=style, model=model)
+
+    if any(k in lowered for k in ["fish", "shark", "piranha", "minnow", "whale", "dolphin"]):
+        return plan_painterly_fish_scene(prompt, width, height, detail_level, style=style, model=model)
 
     if any(k in lowered for k in ["pikachu", "pika", "pokemon"]):
         return plan_painterly_pikachu(width, height, detail_level, style=style, model=model)

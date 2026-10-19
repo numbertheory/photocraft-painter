@@ -189,22 +189,24 @@ The user prompt requests geometric shapes (e.g. triangle, square, polygon, hexag
 """
 
 ANIMATION_KEYFRAME_INSTRUCTION = """
-*** CRITICAL ANIMATION RULE: SINGLE INITIAL SUBJECT ONLY (FRAME 1 AT t=0) ***
+*** CRITICAL ANIMATION RULE: SINGLE INITIAL SUBJECT ONLY (KEYFRAME AT t=0 & ARTICULATED APPENDAGES) ***
 This drawing is strictly FRAME 1 (KEYFRAME AT t=0) of a multi-frame animation (steps > 1).
-You MUST draw ONLY A SINGLE INSTANCE of the animated subject in its initial starting position / starting pose!
-1. STRICTLY ONE SUBJECT:
-   - Draw ONLY ONE ball, ONE character, ONE vehicle, or ONE creature in its starting pose at the beginning of the motion (on the left side of the canvas, e.g. x = 140..280, if moving across the screen).
-   - For example, if the prompt is "a ball bouncing across the screen", draw ONLY ONE BALL (e.g. at the starting position on the left side or top-left) and an optional static ground/floor line.
-   - For example, if the prompt is "a person walking across the screen", draw ONLY ONE PERSON at their starting stride on one side.
+You MUST draw the scene at a SINGLE MOMENT IN TIME (t=0) in its initial starting pose!
+1. SINGLE INSTANT AT t=0 (NO MOTION TRAILS OR MULTIPLE EXPOSURES):
+   - For a single-subject prompt (e.g. "a ball bouncing across the screen", "a person walking across the screen"), draw ONLY ONE instance of that subject in its starting pose (on the left side of the canvas, e.g. x = 120..300, if moving across the screen).
+   - For a multi-actor interaction prompt (e.g. "a big fish eating a small fish", "a cat chasing a mouse"), draw ONE instance of the primary actor on the left (e.g. "Big Fish: ..." at x = 70..420) and ONE instance of the secondary actor ahead on the right (e.g. "Small Fish: ..." at x = 500..620) with a clear gap between them at t=0 so the chase/bite unfolds across frames!
 2. ABSOLUTELY FORBIDDEN:
-   - NEVER draw multiple stages of the bounce, multiple positions along a trajectory, multiple exposures, or a motion sequence!
-   - NEVER draw multiple balls, multiple duplicate characters, or a comic-strip progression across the canvas!
+   - NEVER draw multiple stages of the bounce, multiple time-stages of the same subject, multiple positions along a trajectory, multiple exposures, or a comic-strip progression!
    - NEVER draw motion path arcs, dashed flight trajectory lines, or timing chart lines!
-   - Drawing multiple stages in Frame 1 ruins the animation because subsequent frames duplicate and animate the entire layer. Frame 1 MUST depict only the single subject at the start of its movement.
-3. STRICT CEL ANIMATION SEPARATION (STATIONARY BACKGROUND vs. SOLID CHARACTER CEL):
-   - Layer 1 ("1. Background Environment"): Place ALL stationary background elements (sky, sun, clouds, hills, field, meadow, grass tufts, flowers, trees, ground line) on this first layer so the background is drawn ONCE and stays stationary!
-   - Layer 2 ("2. Character Solid Color Fills"): Place the single animated character on its own layer. You MUST completely fill the interior of every character part (body, torso, head, ears, legs, paws, tail) using thick, 100% opaque `paint.stroke` sweeps (opacity: 1.0, hardness: 0.98, size: 24-55, e.g. "#ffffff" for a white rabbit, "#ffb6c1" for inner ears) BEFORE drawing ink outlines! Do NOT leave the character hollow or transparent, and do NOT use `shape.create` or `paint.bucket` for the animated character!
-   - Layer 3 ("3. Character Cel Shading, Features & Ink Outlines"): Draw cel shading, eyes, dark pupils, white catchlights, nose, mouth, whiskers, and crisp black ink outlines ("#111116", size: 4-6, hardness: 1.0, opacity: 1.0) on top of the character's solid fills.
+3. ARTICULATED APPENDAGES & BODY PARTS (NAME EVERY MOVABLE PART EXPLICITLY):
+   - Draw movable body parts and appendages as SEPARATE strokes with explicit `"Actor: Part Name"` labels so the animation rig can hinge and move each appendage independently:
+     * For Fish / Sharks / Aquatic scenes: `"Big Fish: Tail Fin"`, `"Big Fish: Dorsal Fin"`, `"Big Fish: Pectoral Fin"`, `"Big Fish: Torso"`, `"Big Fish: Upper Jaw"`, `"Big Fish: Upper Teeth"`, `"Big Fish: Lower Jaw"`, `"Big Fish: Lower Teeth"`, `"Big Fish: Eye"`, and for prey: `"Small Fish: Tail Fin"`, `"Small Fish: Body"`, `"Small Fish: Pectoral Fin"`, `"Small Fish: Eye"`.
+     * For Walking / Running / Hopping / Action characters: `"Character: Torso"`, `"Character: Head"`, `"Character: Left Arm"`, `"Character: Right Arm"`, `"Character: Left Leg"`, `"Character: Right Leg"`, `"Character: Left Ear"`, `"Character: Right Ear"`, `"Character: Tail"`.
+     * For Flying / Winged creatures: `"Character: Torso"`, `"Character: Head"`, `"Character: Left Wing"`, `"Character: Right Wing"`, `"Character: Tail"`.
+4. STRICT CEL ANIMATION SEPARATION (STATIONARY BACKGROUND vs. SOLID CHARACTER CEL):
+   - Layer 1 ("1. Background Environment"): Place ALL stationary background elements (sky, sun, clouds, hills, field, meadow, grass tufts, flowers, trees, ocean water wash, seabed, seaweed, ground line) on this first layer so the background is drawn ONCE and stays stationary!
+   - Layer 2 ("2. Character Solid Color Fills"): Place the animated character(s) on their own layer. Completely fill the interior of every character part (body, torso, head, jaws, fins, ears, legs, paws, tail) using thick, 100% opaque `paint.stroke` sweeps (opacity: 1.0, hardness: 0.98, size: 20-55) BEFORE drawing ink outlines! Do NOT leave characters hollow or transparent, and do NOT use `shape.create` or `paint.bucket` for animated characters!
+   - Layer 3 ("3. Character Cel Shading, Features & Ink Outlines"): Draw cel shading, eyes, dark pupils, white catchlights, nose, mouth, teeth, whiskers, and crisp black ink outlines ("#111116", size: 4-6, hardness: 1.0, opacity: 1.0) on top of the solid fills.
 """
 
 
