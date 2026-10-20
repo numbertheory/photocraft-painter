@@ -93,7 +93,7 @@ Output strictly valid JSON matching this schema:
       "cmd": "paint.stroke",
       "params": {
         "name": "Head Bounding Outline (Enclosed)",
-        "points": [[200, 200], [400, 200], [400, 400], [200, 400], [200, 200]],
+        "points": [[300, 190], [375, 215], [405, 295], [380, 375], [300, 410], [220, 375], [195, 295], [225, 215], [300, 190]],
         "size": 5.0,
         "color": "#111111",
         "hardness": 0.95
@@ -133,10 +133,15 @@ COMMAND OPTIONS:
    - "rect": [x, y, width, height] (3rd and 4th values MUST be WIDTH and HEIGHT, NOT x2/y2!)
    - "fill": hex string or null
 
+ORGANIC CURVES FOR NATURE, PEOPLE, ANIMALS, FISH & TREES (NO ANGULAR BOXES OR STRAIGHT-LINE BODY PARTS):
+- For organic subjects (people, faces, heads, eyes, noses, lips, animals, dinosaurs, rabbits, kangaroos, fish, sharks, birds, trees, trunks, branches, foliage, clouds, hills, waves):
+  * ALWAYS construct faces, heads, jaws, snouts, torsos, bellies, thighs, legs, arms, paws, tails, fins, tree trunks, and canopies from SMOOTH FLOWING CURVES (8 to 16 gracefully arched waypoints along rounded ovals, S-curves, and C-curves) as they exist in nature!
+  * NEVER draw heads, faces, eyes, pupils, torsos, limbs, or tree canopies as 3-, 4-, 5-, or 6-point straight-lined boxes, rectangles, triangles, pentagons, or hexagons (unless the style is explicitly "cubism" or the prompt explicitly asks for geometric polygons)!
+
 IMPORTANT BOUNDING BOX & PAINT BUCKET RULE:
 When coloring in regions (such as a character's body, face, head, ears, clothing, or background objects), NEVER messily scribble back and forth with dozens of thick brush strokes!
 Instead:
-- First, draw a completely enclosed bounding outline with `paint.stroke` (e.g. a closed polygon or contour where the start and end points connect: points[0] == points[-1], size >= 4.0, hardness >= 0.9).
+- First, draw a completely enclosed curved bounding outline with `paint.stroke` (a smooth closed organic contour where the start and end points connect: points[0] == points[-1], size >= 4.0, hardness >= 0.9).
   WARNING: The bounding contour MUST be completely enclosed without any gaps, pinholes, or openings, otherwise the paint bucket will leak across the entire canvas!
 - Immediately follow with `paint.bucket` on the SAME layer using a seed point (x, y) situated well inside the center of that enclosed area, with "sampleAllLayers": true.
 - Organize distinct subjects and elements onto separate layers with `layer.new.layer` (e.g. background shapes first, character base next, details on top). Each layer is isolated during drawing (prior background layers are kept hidden) so background shapes will NEVER divide, cut through, or segment your paint bucket fills. Once drawing finishes, all layers are restored to visible simultaneously for the final artwork.
@@ -153,20 +158,21 @@ The artwork features a person, portrait, or human face. You MUST obey these dept
    - Layer 1: Background & Atmosphere (sky, setting, canvas wash) MUST be drawn first.
    - Layer 2: Rear Hair & Backdrop Elements (hair volume and flowing tresses behind the head/shoulders) MUST be drawn in an early layer BEFORE the face.
    - Layer 3: Torso, Neck & Garments.
-   - Layer 4: Head & Face Skin Base (draw a completely enclosed contour of the head/jaw and fill it with `paint.bucket` in skin tone, sampleAllLayers: true). This creates an opaque base that cleanly covers any background lines and rear hair underneath!
+   - Layer 4: Head & Face Skin Base (draw a completely enclosed, smoothly curved oval/jaw contour of the head and fill it with `paint.bucket` in skin tone, sampleAllLayers: true). This creates an opaque base that cleanly covers any background lines and rear hair underneath!
    - Layer 5: Facial Features (eyes, eyebrows, nose, mouth) MUST be drawn on top of the clean skin base.
    - Layer 6: Foreground Framing Tendrils (ONLY hair curls framing the outer cheeks or resting on shoulders).
    - Layer 7: Specular Highlights & Eye Catchlights.
 2. ABSOLUTELY FORBIDDEN:
    - NEVER draw hair strokes, shading, or texture lines horizontally across the eyes, nose, or mouth! The face must remain pristine and unobstructed!
    - NEVER draw hair texture after the facial features unless it is purely framing the side contours!
+   - NEVER draw angular, boxy, or straight-line polygons for the face, jaw, cheeks, eyes, or shoulders (unless style is "cubism"). Use at least 8–14 smoothly curved waypoints for organic facial contours!
 3. HIGH FIDELITY FACIAL ANATOMY:
-   - Replicate the subject's facial features with high fidelity:
-     * Eyes: almond upper/lower eyelids, colored iris, dark pupil, white specular catchlight dots.
-     * Eyebrows: graceful arches matching the expression.
-     * Nose: sculpted bridge line and delicate nostril curves/shading.
-     * Lips: defined upper lip with cupid's bow, mouth center line, fuller lower lip with natural tone.
-   - Do NOT use crude scratches for the face. Allocate dedicated, distinct anatomical strokes for each feature.
+   - Replicate the subject's facial features with high fidelity using natural curves:
+     * Eyes: curved almond upper/lower eyelids, circular iris, round dark pupil, white specular catchlight dots.
+     * Eyebrows: graceful curved arches matching the expression.
+     * Nose: sculpted curved bridge line and delicate nostril curves/shading.
+     * Lips: defined upper lip with curved cupid's bow, gently curved mouth center line, fuller rounded lower lip with natural tone.
+   - Do NOT use crude straight scratches for the face. Allocate dedicated, distinct anatomical curved strokes for each feature.
 """
 
 GEOMETRIC_PROMPT_INSTRUCTION = """
@@ -198,15 +204,16 @@ You MUST draw the scene at a SINGLE MOMENT IN TIME (t=0) in its initial starting
 2. ABSOLUTELY FORBIDDEN:
    - NEVER draw multiple stages of the bounce, multiple time-stages of the same subject, multiple positions along a trajectory, multiple exposures, or a comic-strip progression!
    - NEVER draw motion path arcs, dashed flight trajectory lines, or timing chart lines!
+   - NEVER draw angular, straight-lined polygons or boxes for organic body parts (heads, faces, snouts, jaws, eyes, torsos, thighs, legs, arms, tails, fins, trees). Every organic body part MUST use 8–16 smoothly curved waypoints!
 3. ARTICULATED APPENDAGES & BODY PARTS (NAME EVERY MOVABLE PART EXPLICITLY):
-   - Draw movable body parts and appendages as SEPARATE strokes with explicit `"Actor: Part Name"` labels so the animation rig can hinge and move each appendage independently:
+   - Draw movable body parts and appendages as SEPARATE curved strokes with explicit `"Actor: Part Name"` labels so the animation rig can hinge and move each appendage independently:
      * For Fish / Sharks / Aquatic scenes: `"Big Fish: Tail Fin"`, `"Big Fish: Dorsal Fin"`, `"Big Fish: Pectoral Fin"`, `"Big Fish: Torso"`, `"Big Fish: Upper Jaw"`, `"Big Fish: Upper Teeth"`, `"Big Fish: Lower Jaw"`, `"Big Fish: Lower Teeth"`, `"Big Fish: Eye"`, and for prey: `"Small Fish: Tail Fin"`, `"Small Fish: Body"`, `"Small Fish: Pectoral Fin"`, `"Small Fish: Eye"`.
      * For Walking / Running / Hopping / Action characters: `"Character: Torso"`, `"Character: Head"`, `"Character: Left Arm"`, `"Character: Right Arm"`, `"Character: Left Leg"`, `"Character: Right Leg"`, `"Character: Left Ear"`, `"Character: Right Ear"`, `"Character: Tail"`.
      * For Flying / Winged creatures: `"Character: Torso"`, `"Character: Head"`, `"Character: Left Wing"`, `"Character: Right Wing"`, `"Character: Tail"`.
 4. STRICT CEL ANIMATION SEPARATION (STATIONARY BACKGROUND vs. SOLID CHARACTER CEL):
    - Layer 1 ("1. Background Environment"): Place ALL stationary background elements (sky, sun, clouds, hills, field, meadow, grass tufts, flowers, trees, ocean water wash, seabed, seaweed, ground line) on this first layer so the background is drawn ONCE and stays stationary!
-   - Layer 2 ("2. Character Solid Color Fills"): Place the animated character(s) on their own layer. Completely fill the interior of every character part (body, torso, head, jaws, fins, ears, legs, paws, tail) using thick, 100% opaque `paint.stroke` sweeps (opacity: 1.0, hardness: 0.98, size: 20-55) BEFORE drawing ink outlines! Do NOT leave characters hollow or transparent, and do NOT use `shape.create` or `paint.bucket` for animated characters!
-   - Layer 3 ("3. Character Cel Shading, Features & Ink Outlines"): Draw cel shading, eyes, dark pupils, white catchlights, nose, mouth, teeth, whiskers, and crisp black ink outlines ("#111116", size: 4-6, hardness: 1.0, opacity: 1.0) on top of the solid fills.
+   - Layer 2 ("2. Character Solid Color Fills"): Place the animated character(s) on their own layer. Completely fill the interior of every character part (body, torso, head, jaws, fins, ears, legs, paws, tail) using thick, 100% opaque curved `paint.stroke` sweeps (opacity: 1.0, hardness: 0.98, size: 20-55) BEFORE drawing ink outlines! Do NOT leave characters hollow or transparent, and do NOT use `shape.create` or `paint.bucket` for animated characters!
+   - Layer 3 ("3. Character Cel Shading, Features & Ink Outlines"): Draw cel shading, eyes, dark pupils, white catchlights, nose, mouth, teeth, whiskers, and crisp black curved ink outlines ("#111116", size: 4-6, hardness: 1.0, opacity: 1.0) on top of the solid fills.
 """
 
 
@@ -260,28 +267,65 @@ def normalize_step(step: dict[str, Any], canvas_w: int = 800, canvas_h: int = 80
                     valid_pts.append([round(px, 1), round(py, 1), round(pr, 2)])
             if len(valid_pts) < 2:
                 valid_pts = [[100.0, 100.0, 0.5], [101.0, 101.0, 0.5]]
-            elif len(valid_pts) <= 8:
-                # Check if this stroke represents a closed polygon (e.g. triangle with 4 points, quad with 5 points, etc.)
-                # or is marked with geometric / polygon / linear flags or names
+            elif len(valid_pts) <= 36:
                 is_closed = (
                     len(valid_pts) >= 4
-                    and math.hypot(valid_pts[0][0] - valid_pts[-1][0], valid_pts[0][1] - valid_pts[-1][1]) < 8.0
+                    and math.hypot(valid_pts[0][0] - valid_pts[-1][0], valid_pts[0][1] - valid_pts[-1][1]) < 15.0
                 )
                 name_lower = str(raw_params.get("name") or "").lower()
+                is_cubist = "cubist" in name_lower or "cubism" in name_lower or "facet" in name_lower
+                is_organic_name = not is_cubist and any(
+                    k in name_lower
+                    for k in (
+                        "head", "face", "jaw", "chin", "cheek", "snout", "muzzle", "beak", "bill",
+                        "eye", "pupil", "iris", "brow", "eyelid", "nose", "nostril", "mouth", "lip",
+                        "tongue", "ear", "neck", "throat", "shoulder", "chest", "torso", "body",
+                        "belly", "abdomen", "back", "rump", "hip", "thigh", "calf", "leg", "arm",
+                        "forearm", "bicep", "elbow", "wrist", "hand", "finger", "thumb", "foot",
+                        "toe", "heel", "paw", "hoof", "claw", "tail", "fin", "dorsal", "pectoral",
+                        "fluke", "gill", "wing", "feather", "plume", "hair", "curl", "lock", "fur",
+                        "mane", "person", "human", "woman", "man", "girl", "boy", "child", "figure",
+                        "portrait", "animal", "creature", "dinosaur", "rex", "raptor", "dragon",
+                        "rabbit", "bunny", "hare", "kangaroo", "dog", "puppy", "cat", "kitten",
+                        "horse", "deer", "moose", "lion", "tiger", "bear", "elephant", "monkey",
+                        "bird", "duck", "fish", "shark", "whale", "dolphin", "minnow", "octopus",
+                        "frog", "snake", "turtle", "tree", "trunk", "branch", "bough", "root",
+                        "bark", "leaf", "leaves", "foliage", "canopy", "crown", "bush", "shrub",
+                        "flower", "petal", "stem", "vine", "grass", "meadow", "hill", "cloud",
+                        "wave", "bubble", "droplet",
+                    )
+                )
                 is_polygon_flag = (
                     bool(raw_params.get("polygon"))
                     or bool(raw_params.get("linear"))
                     or raw_params.get("shape") in ("polygon", "triangle", "poly", "rect")
-                    or any(k in name_lower for k in ("triangle", "polygon", "poly", "sided", "geometric", "corner", "vertex", "prism", "pyramid", "delta", "rect", "square", "diamond", "hexagon", "pentagon", "octagon", "facet", "plane", "cubist", "cubism"))
+                    or (
+                        not is_organic_name
+                        and any(
+                            k in name_lower
+                            for k in (
+                                "triangle", "polygon", "poly", "sided", "geometric", "corner",
+                                "vertex", "prism", "pyramid", "delta", "rect", "square", "diamond",
+                                "hexagon", "pentagon", "octagon", "facet", "plane", "cubist", "cubism",
+                                "zigzag", "teeth", "tooth",
+                            )
+                        )
+                    )
                 )
 
-                if (is_closed or is_polygon_flag) and not raw_params.get("smooth"):
-                    # Linearly interpolate polygon edges to preserve straight sides and sharp vertices!
-                    # Strictly avoids Catmull-Rom spline which rounds triangles into gum drops.
-                    valid_pts = stroke_polygon(valid_pts, wobble=0.0, steps_per_side=15, closed=is_closed)
-                else:
-                    # Interpolate coarse waypoints into smooth Catmull-Rom spline
-                    valid_pts = smooth_path(valid_pts, samples_per_segment=6)
+                seg_dists = [
+                    math.hypot(valid_pts[i + 1][0] - valid_pts[i][0], valid_pts[i + 1][1] - valid_pts[i][1])
+                    for i in range(len(valid_pts) - 1)
+                ]
+                avg_seg = sum(seg_dists) / max(1, len(seg_dists))
+
+                if is_polygon_flag and not raw_params.get("smooth"):
+                    if len(valid_pts) <= 12 and avg_seg >= 6.0:
+                        # Linearly interpolate explicit polygon edges to preserve straight sides and sharp vertices!
+                        valid_pts = stroke_polygon(valid_pts, wobble=0.0, steps_per_side=15, closed=is_closed)
+                elif len(valid_pts) <= 8 or avg_seg >= 6.0:
+                    # Smooth coarse waypoints into natural Catmull-Rom organic curves!
+                    valid_pts = smooth_path(valid_pts, samples_per_segment=8)
             clean_params["points"] = valid_pts
         else:
             clean_params["points"] = [[100.0, 100.0, 0.5], [101.0, 101.0, 0.5]]

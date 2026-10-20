@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from photocraft_painter.strokes import (
+    smooth_path,
     stroke_arc,
     stroke_bezier,
     stroke_enclosed_loop,
@@ -6020,7 +6021,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Big Fish: Tail Fin Solid Fill",
-                "points": stroke_polygon([(s(155), s(395)), (s(78), s(310)), (s(102), s(395)), (s(75), s(480))], closed=True, steps_per_side=6),
+                "points": stroke_enclosed_loop([(s(155), s(395)), (s(115), s(345)), (s(78), s(310)), (s(102), s(395)), (s(75), s(480)), (s(115), s(445))]),
                 "size": s(26.0),
                 "color": big_fin_color,
                 "hardness": 0.98,
@@ -6032,7 +6033,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Big Fish: Dorsal Fin Solid Fill",
-                "points": stroke_polygon([(s(205), s(295)), (s(245), s(232)), (s(300), s(292))], closed=True, steps_per_side=6),
+                "points": stroke_enclosed_loop([(s(205), s(295)), (s(225), s(252)), (s(252), s(232)), (s(282), s(255)), (s(305), s(292))]),
                 "size": s(22.0),
                 "color": big_fin_color,
                 "hardness": 0.98,
@@ -6055,7 +6056,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Big Fish: Torso Core Solid Fill",
-                "points": stroke_line(s(175), s(392), s(320), s(392), steps=10),
+                "points": stroke_bezier((s(175), s(392)), (s(225), s(386)), (s(275), s(388)), (s(320), s(392)), steps=12),
                 "size": s(68.0),
                 "color": big_color,
                 "hardness": 1.0,
@@ -6079,7 +6080,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Big Fish: Mouth Cavity Fill",
-                "points": stroke_polygon([(s(318), s(395)), (s(398), s(350)), (s(375), s(395)), (s(396), s(442))], closed=True, steps_per_side=5),
+                "points": stroke_enclosed_loop([(s(318), s(395)), (s(360), s(368)), (s(398), s(350)), (s(375), s(395)), (s(396), s(442)), (s(358), s(422))]),
                 "size": s(26.0),
                 "color": mouth_color,
                 "hardness": 0.98,
@@ -6115,7 +6116,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Big Fish: Pectoral Fin Solid Fill",
-                "points": stroke_polygon([(s(265), s(420)), (s(220), s(455)), (s(255), s(478))], closed=True, steps_per_side=5),
+                "points": stroke_enclosed_loop([(s(265), s(420)), (s(235), s(436)), (s(220), s(458)), (s(252), s(478)), (s(275), s(448))]),
                 "size": s(20.0),
                 "color": big_fin_color,
                 "hardness": 0.98,
@@ -6129,7 +6130,7 @@ def plan_painterly_fish_scene(
                 "cmd": "paint.stroke",
                 "params": {
                     "name": "Small Fish: Tail Fin Solid Fill",
-                    "points": stroke_polygon([(s(538), s(396)), (s(502), s(374)), (s(512), s(396)), (s(502), s(418))], closed=True, steps_per_side=5),
+                    "points": stroke_enclosed_loop([(s(538), s(396)), (s(516), s(382)), (s(502), s(374)), (s(512), s(396)), (s(502), s(418)), (s(516), s(410))]),
                     "size": s(14.0),
                     "color": small_fin,
                     "hardness": 0.98,
@@ -6159,7 +6160,7 @@ def plan_painterly_fish_scene(
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Tail Fin Outline",
-            "points": stroke_polygon([(s(155), s(380)), (s(72), s(302)), (s(104), s(395)), (s(70), s(486)), (s(155), s(412))], closed=True, steps_per_side=8),
+            "points": stroke_enclosed_loop([(s(155), s(380)), (s(112), s(336)), (s(72), s(302)), (s(104), s(395)), (s(70), s(486)), (s(112), s(452)), (s(155), s(412))]),
             "size": s(5.0),
             "color": ink_color,
             "hardness": 1.0,
@@ -6170,7 +6171,7 @@ def plan_painterly_fish_scene(
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Tail Fin Upper Ray",
-            "points": stroke_line(s(145), s(390), s(88), s(332), steps=8),
+            "points": stroke_bezier((s(145), s(390)), (s(125), s(372)), (s(105), s(350)), (s(88), s(332)), steps=10),
             "size": s(3.0),
             "color": ink_color,
             "hardness": 0.95,
@@ -6181,7 +6182,7 @@ def plan_painterly_fish_scene(
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Tail Fin Lower Ray",
-            "points": stroke_line(s(145), s(402), s(86), s(458), steps=8),
+            "points": stroke_bezier((s(145), s(402)), (s(125), s(420)), (s(105), s(440)), (s(86), s(458)), steps=10),
             "size": s(3.0),
             "color": ink_color,
             "hardness": 0.95,
@@ -6189,20 +6190,19 @@ def plan_painterly_fish_scene(
         },
     })
 
-    # 2. Big Fish Dorsal Fin Outline
+    # 2. Big Fish Dorsal Fin Outline (Curved dorsal crest)
     steps.append({
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Dorsal Fin Outline",
-            "points": [
-                [s(195), s(298), 1.0],
-                [s(222), s(238), 1.0],
-                [s(245), s(272), 1.0],
-                [s(268), s(228), 1.0],
-                [s(288), s(268), 1.0],
-                [s(308), s(242), 1.0],
-                [s(322), s(292), 1.0],
-            ],
+            "points": smooth_path([
+                [s(195), s(298)],
+                [s(215), s(250)],
+                [s(245), s(230)],
+                [s(278), s(238)],
+                [s(304), s(262)],
+                [s(322), s(292)],
+            ], samples_per_segment=6),
             "size": s(4.8),
             "color": ink_color,
             "hardness": 1.0,
@@ -6245,12 +6245,12 @@ def plan_painterly_fish_scene(
         },
     })
 
-    # 4. Big Fish Pectoral Fin Outline (Paddle Appendage)
+    # 4. Big Fish Pectoral Fin Outline (Curved Paddle Appendage)
     steps.append({
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Pectoral Fin Outline",
-            "points": stroke_polygon([(s(272), s(416)), (s(212), s(456)), (s(252), s(486)), (s(280), s(435))], closed=True, steps_per_side=6),
+            "points": stroke_enclosed_loop([(s(272), s(416)), (s(236), s(434)), (s(212), s(458)), (s(252), s(486)), (s(280), s(442))]),
             "size": s(4.5),
             "color": ink_color,
             "hardness": 1.0,
@@ -6258,18 +6258,20 @@ def plan_painterly_fish_scene(
         },
     })
 
-    # 5. Big Fish Upper Jaw, Snout & Upper Teeth (Hinged Upper Jaw Appendage)
+    # 5. Big Fish Upper Jaw, Snout & Upper Teeth (Curved Hinged Upper Jaw Appendage)
     steps.append({
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Upper Jaw Outline",
-            "points": [
-                [s(325), s(295), 1.0],
-                [s(385), s(305), 1.0],
-                [s(432), s(338), 1.0],
-                [s(415), s(362), 1.0],
-                [s(332), s(392), 1.0],
-            ],
+            "points": smooth_path([
+                [s(325), s(295)],
+                [s(365), s(298)],
+                [s(405), s(314)],
+                [s(430), s(340)],
+                [s(412), s(364)],
+                [s(372), s(380)],
+                [s(332), s(392)],
+            ], samples_per_segment=6),
             "size": s(5.2),
             "color": ink_color,
             "hardness": 1.0,
@@ -6293,21 +6295,24 @@ def plan_painterly_fish_scene(
             "color": ink_color,
             "hardness": 1.0,
             "opacity": 1.0,
+            "linear": True,
         },
     })
 
-    # 6. Big Fish Lower Jaw & Lower Teeth (Hinged Lower Jaw Appendage)
+    # 6. Big Fish Lower Jaw & Lower Teeth (Curved Hinged Lower Jaw Appendage)
     steps.append({
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Lower Jaw Outline",
-            "points": [
-                [s(332), s(392), 1.0],
-                [s(412), s(432), 1.0],
-                [s(426), s(452), 1.0],
-                [s(382), s(478), 1.0],
-                [s(325), s(468), 1.0],
-            ],
+            "points": smooth_path([
+                [s(332), s(392)],
+                [s(372), s(412)],
+                [s(412), s(432)],
+                [s(424), s(452)],
+                [s(398), s(472)],
+                [s(362), s(476)],
+                [s(325), s(468)],
+            ], samples_per_segment=6),
             "size": s(5.2),
             "color": ink_color,
             "hardness": 1.0,
@@ -6331,6 +6336,7 @@ def plan_painterly_fish_scene(
             "color": ink_color,
             "hardness": 1.0,
             "opacity": 1.0,
+            "linear": True,
         },
     })
 
@@ -6373,7 +6379,7 @@ def plan_painterly_fish_scene(
         "cmd": "paint.stroke",
         "params": {
             "name": "Big Fish: Upper Jaw Brow Ridge",
-            "points": stroke_line(s(344), s(314), s(374), s(322), steps=6),
+            "points": stroke_bezier((s(342), s(314)), (s(354), s(312)), (s(365), s(316)), (s(375), s(323)), steps=10),
             "size": s(4.2),
             "color": ink_color,
             "hardness": 1.0,
@@ -6387,7 +6393,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Tail Fin Outline",
-                "points": stroke_polygon([(s(538), s(396)), (s(498), s(370)), (s(512), s(396)), (s(498), s(422))], closed=True, steps_per_side=6),
+                "points": stroke_enclosed_loop([(s(538), s(396)), (s(516), s(380)), (s(498), s(370)), (s(512), s(396)), (s(498), s(422)), (s(516), s(412))]),
                 "size": s(4.0),
                 "color": ink_color,
                 "hardness": 1.0,
@@ -6409,7 +6415,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Dorsal Fin Outline",
-                "points": [[s(562), s(373), 1.0], [s(576), s(356), 1.0], [s(590), s(374), 1.0]],
+                "points": stroke_bezier((s(562), s(373)), (s(570), s(354)), (s(582), s(356)), (s(590), s(374)), steps=10),
                 "size": s(3.6),
                 "color": ink_color,
                 "hardness": 1.0,
@@ -6420,7 +6426,7 @@ def plan_painterly_fish_scene(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Pectoral Fin Outline",
-                "points": [[s(576), s(402), 1.0], [s(558), s(416), 1.0], [s(582), s(414), 1.0]],
+                "points": stroke_bezier((s(576), s(402)), (s(562), s(410)), (s(558), s(418)), (s(582), s(414)), steps=10),
                 "size": s(3.4),
                 "color": ink_color,
                 "hardness": 1.0,

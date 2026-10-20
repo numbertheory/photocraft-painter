@@ -238,9 +238,45 @@ def smooth_path(coarse_points: Sequence[Sequence[float]], samples_per_segment: i
 
     pts = [[float(p[0]), float(p[1])] for p in coarse_points]
     is_closed = (
-        len(pts) >= 3
-        and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 3.0
+        len(pts) >= 4
+        and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 15.0
     )
+    if is_closed:
+        pts[-1] = [pts[0][0], pts[0][1]]
+
+    # Soften sharp angular corners on coarse waypoints so organic contours (heads, faces, eyes,
+    # torsos, limbs, fish, trees) curve smoothly like in nature instead of looking polygonal.
+    if len(pts) <= 28:
+        seg_dists = [
+            math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+            for i in range(len(pts) - 1)
+        ]
+        avg_seg = sum(seg_dists) / max(1, len(seg_dists))
+        if avg_seg >= 8.0:
+            if is_closed and len(pts) >= 4:
+                ring = pts[:-1]
+                n_ring = len(ring)
+                if n_ring >= 3:
+                    smoothed_ring: list[list[float]] = []
+                    for i in range(n_ring):
+                        p_prev = ring[(i - 1) % n_ring]
+                        p_curr = ring[i]
+                        p_next = ring[(i + 1) % n_ring]
+                        sx = 0.70 * p_curr[0] + 0.15 * p_prev[0] + 0.15 * p_next[0]
+                        sy = 0.70 * p_curr[1] + 0.15 * p_prev[1] + 0.15 * p_next[1]
+                        smoothed_ring.append([sx, sy])
+                    pts = smoothed_ring + [[smoothed_ring[0][0], smoothed_ring[0][1]]]
+            elif not is_closed and len(pts) >= 3:
+                smoothed_open: list[list[float]] = [pts[0]]
+                for i in range(1, len(pts) - 1):
+                    p_prev = pts[i - 1]
+                    p_curr = pts[i]
+                    p_next = pts[i + 1]
+                    sx = 0.72 * p_curr[0] + 0.14 * p_prev[0] + 0.14 * p_next[0]
+                    sy = 0.72 * p_curr[1] + 0.14 * p_prev[1] + 0.14 * p_next[1]
+                    smoothed_open.append([sx, sy])
+                smoothed_open.append(pts[-1])
+                pts = smoothed_open
 
     total_segments = len(pts) - 1
     result: list[list[float]] = []
@@ -294,9 +330,13 @@ def smooth_path(coarse_points: Sequence[Sequence[float]], samples_per_segment: i
 def stroke_enclosed_loop(
     waypoints: Sequence[Sequence[float]],
     steps_per_segment: int = 15,
+    linear: bool = False,
 ) -> list[list[float]]:
     """Generate a watertight closed bounding contour where points[0] seamlessly closes into points[-1].
     
+    By default, coarse waypoints (<= 40 points) are first curved with a smooth Catmull-Rom spline
+    so organic subjects (faces, bodies, ears, fins, trees) have natural curved contours rather than
+    straight polygon edges. Pass linear=True when sharp straight edges are desired (e.g. rectangles).
     Guarantees that boundaries are completely enclosed with dense sampling and overlap
     so flood fill (paint.bucket) will not leak.
     """
@@ -308,6 +348,12 @@ def stroke_enclosed_loop(
     if math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) > 0.001:
         pts.append([pts[0][0], pts[0][1]])
 
+    if not linear and len(pts) <= 40:
+        curved = smooth_path(pts, samples_per_segment=6)
+        pts = [[float(p[0]), float(p[1])] for p in curved]
+        if math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) > 0.001:
+            pts.append([pts[0][0], pts[0][1]])
+
     result: list[list[float]] = []
     n = len(pts) - 1
     for seg in range(n):
@@ -316,7 +362,7 @@ def stroke_enclosed_loop(
         dx = p2[0] - p1[0]
         dy = p2[1] - p1[1]
         dist = math.hypot(dx, dy)
-        actual_steps = max(steps_per_segment, int(dist / 1.5))
+        actual_steps = max(2 if not linear else steps_per_segment, int(dist / 1.5))
         for step in range(actual_steps):
             t = step / actual_steps
             px = p1[0] + dx * t
@@ -345,7 +391,7 @@ def stroke_enclosed_rect(
     c1 = (x + w, y)
     c2 = (x + w, y + h)
     c3 = (x, y + h)
-    return stroke_enclosed_loop([c0, c1, c2, c3], steps_per_segment=steps_per_side)
+    return stroke_enclosed_loop([c0, c1, c2, c3], steps_per_segment=steps_per_side, linear=True)
 
 
 def stroke_enclosed_oval(

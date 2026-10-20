@@ -1848,6 +1848,94 @@ async def test_merge_drawing_layers_to_single_layer():
     assert state["layers"][1]["name"] == "Background"
 
 
+def test_normalize_step_curves_closed_organic_body_parts_not_straight_polygons():
+    """Verify that closed organic contours (faces, eyes, heads, torsos, limbs, fish, trees)
+    are smoothed into natural Catmull-Rom curves rather than straight-edged polygons."""
+    # A 4-corner boxy closed loop for an organic subject (e.g. Head / Eye / Torso / Tree Canopy)
+    box_pts = [[200.0, 200.0], [400.0, 200.0], [400.0, 400.0], [200.0, 400.0], [200.0, 200.0]]
+    for organic_name in (
+        "Character: Head Outline",
+        "Eye Contour",
+        "Animal: Torso Silhouette",
+        "Dinosaur: Thigh & Leg",
+        "Big Fish: Tail Fin",
+        "Tree Canopy Outline",
+    ):
+        step = {
+            "cmd": "paint.stroke",
+            "params": {
+                "name": organic_name,
+                "points": box_pts,
+                "size": 4.0,
+                "color": "#111111",
+            },
+        }
+        norm = normalize_step(step)
+        pts = norm["params"]["points"]
+        assert len(pts) >= 24
+        # If it had been linearly interpolated by stroke_polygon, the top edge would stay flat at y == 200.0
+        # and the sharp corner (200.0, 200.0) would be hit verbatim. With organic curve smoothing, corners are rounded!
+        has_sharp_200_corner = any(abs(p[0] - 200.0) < 0.5 and abs(p[1] - 200.0) < 0.5 for p in pts)
+        assert not has_sharp_200_corner, f"{organic_name} kept a sharp 90-degree box corner at (200, 200)"
+        # Also verify points along top arc curve smoothly rather than all having identical y
+        top_ys = [p[1] for p in pts if 240.0 <= p[0] <= 360.0 and p[1] < 300.0]
+        assert len(set(round(y, 1) for y in top_ys)) > 1, f"{organic_name} top edge is a flat straight line"
+
+
+def test_normalize_step_smooths_medium_length_organic_polylines():
+    """Verify that 9-to-20 point angular polylines for organic contours are smoothed into curves."""
+    # A 10-point angular jaw/face contour
+    angular_jaw = [
+        [300.0, 200.0], [380.0, 200.0], [420.0, 250.0], [420.0, 330.0], [370.0, 400.0],
+        [300.0, 420.0], [230.0, 400.0], [180.0, 330.0], [180.0, 250.0], [300.0, 200.0],
+    ]
+    step = {
+        "cmd": "paint.stroke",
+        "params": {
+            "name": "Person Face & Jaw Contour",
+            "points": angular_jaw,
+            "size": 4.0,
+            "color": "#111111",
+        },
+    }
+    norm = normalize_step(step)
+    pts = norm["params"]["points"]
+    assert len(pts) > len(angular_jaw) * 3
+
+
+def test_stroke_enclosed_loop_curves_organic_waypoints_while_rect_stays_linear():
+    """Verify stroke_enclosed_loop curves coarse organic loops while stroke_enclosed_rect stays sharp."""
+    from photocraft_painter.strokes import stroke_enclosed_loop, stroke_enclosed_rect
+
+    coarse_face = [[300.0, 200.0], [400.0, 200.0], [400.0, 350.0], [200.0, 350.0], [200.0, 200.0]]
+    curved_loop = stroke_enclosed_loop(coarse_face)
+    assert len(curved_loop) > 40
+    # Corner (400, 200) is rounded inward on organic loop
+    assert not any(abs(p[0] - 400.0) < 0.5 and abs(p[1] - 200.0) < 0.5 for p in curved_loop)
+
+    # Rectangle explicitly preserves sharp linear corners
+    rect_loop = stroke_enclosed_rect(200.0, 200.0, 200.0, 150.0)
+    assert any(abs(p[0] - 400.0) < 0.5 and abs(p[1] - 200.0) < 0.5 for p in rect_loop)
+
+
+def test_prompts_require_organic_curves_for_nature_people_animals_fish_trees():
+    """Verify system and keyframe instructions explicitly require curved organic forms over straight lines."""
+    from photocraft_painter.composer import (
+        ANIMATION_KEYFRAME_INSTRUCTION,
+        PORTRAIT_PROMPT_INSTRUCTION,
+        SYSTEM_PROMPT,
+    )
+
+    assert "ORGANIC CURVES" in SYSTEM_PROMPT
+    assert "SMOOTH FLOWING CURVES" in SYSTEM_PROMPT
+    assert "trees" in SYSTEM_PROMPT.lower()
+    assert "animals" in SYSTEM_PROMPT.lower()
+    assert "fish" in SYSTEM_PROMPT.lower()
+    assert "people" in SYSTEM_PROMPT.lower()
+    assert "curved" in PORTRAIT_PROMPT_INSTRUCTION.lower()
+    assert "curved" in ANIMATION_KEYFRAME_INSTRUCTION.lower()
+
+
 
 
 

@@ -26,6 +26,7 @@ from photocraft_painter.fallback_composer import (
 )
 from photocraft_painter.strokes import (
     smooth_path,
+    stroke_bezier,
     stroke_enclosed_loop,
     stroke_enclosed_oval,
     stroke_line,
@@ -976,10 +977,8 @@ def _synthesize_small_fish_prey(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Tail Fin Solid Fill",
-                "points": stroke_polygon(
-                    [(fish_cx - 36, fish_cy), (fish_cx - 66, fish_cy - 20), (fish_cx - 56, fish_cy), (fish_cx - 66, fish_cy + 20)],
-                    closed=True,
-                    steps_per_side=5,
+                "points": stroke_enclosed_loop(
+                    [(fish_cx - 36, fish_cy), (fish_cx - 52, fish_cy - 12), (fish_cx - 66, fish_cy - 20), (fish_cx - 56, fish_cy), (fish_cx - 66, fish_cy + 20), (fish_cx - 52, fish_cy + 12)],
                 ),
                 "size": 14.0,
                 "color": "#f77f00",
@@ -1006,10 +1005,8 @@ def _synthesize_small_fish_prey(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Tail Fin Outline",
-                "points": stroke_polygon(
-                    [(fish_cx - 36, fish_cy), (fish_cx - 68, fish_cy - 22), (fish_cx - 56, fish_cy), (fish_cx - 68, fish_cy + 22)],
-                    closed=True,
-                    steps_per_side=5,
+                "points": stroke_enclosed_loop(
+                    [(fish_cx - 36, fish_cy), (fish_cx - 54, fish_cy - 13), (fish_cx - 68, fish_cy - 22), (fish_cx - 56, fish_cy), (fish_cx - 68, fish_cy + 22), (fish_cx - 54, fish_cy + 13)],
                 ),
                 "size": ink_sz,
                 "color": ink_col,
@@ -1034,7 +1031,7 @@ def _synthesize_small_fish_prey(
             "cmd": "paint.stroke",
             "params": {
                 "name": "Small Fish: Pectoral Fin Outline",
-                "points": [[fish_cx - 2, fish_cy + 5, 1.0], [fish_cx - 16, fish_cy + 18, 1.0], [fish_cx + 4, fish_cy + 15, 1.0]],
+                "points": stroke_bezier((fish_cx - 2, fish_cy + 5), (fish_cx - 12, fish_cy + 12), (fish_cx - 16, fish_cy + 18), (fish_cx + 4, fish_cy + 15), steps=10),
                 "size": max(1.8, ink_sz * 0.85),
                 "color": ink_col,
                 "hardness": 0.95,
